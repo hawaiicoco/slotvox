@@ -1,0 +1,18 @@
+# environments / caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# build artifacts
+dist/
+build/
+*.egg-info/
+
+# experiment outputs (examples write to user-chosen dirs, never the repo)
+outputs/
+*.log
