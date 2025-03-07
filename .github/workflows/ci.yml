@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Python ${{ matrix.python-version }} on ubuntu-latest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install with dev + torch extras (CPU wheels)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,torch]" \
+            --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: make build
+        run: make build
+      - name: make test-all
+        run: make test-all
+      - name: make format-check
+        run: make format-check
+      - name: make lint
+        run: make lint
+      - name: Wheel install smoke test
+        run: python scripts/check_package.py
