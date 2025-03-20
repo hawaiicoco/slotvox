@@ -52,3 +52,30 @@ def canonical_dumps(obj: Any) -> str:
         ensure_ascii=False,
         allow_nan=False,
     )
+
+
+def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    seen: set[str] = set()
+    for key, _ in pairs:
+        if key in seen:
+            raise SchemaError(f"duplicate key in canonical JSON object: {key!r}")
+        seen.add(key)
+    return dict(pairs)
+
+
+def canonical_loads(text: str | bytes) -> Any:
+    """Parse JSON text, rejecting duplicate object keys and invalid bytes.
+
+    Duplicate keys make artifacts ambiguous, so canonical form forbids them
+    in both directions (serialization cannot produce them; parsing rejects
+    hand-edited or hostile input).
+    """
+    if isinstance(text, bytes):
+        try:
+            text = text.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise SchemaError(f"canonical JSON must be valid utf-8: {exc}") from exc
+    try:
+        return json.loads(text, object_pairs_hook=_reject_duplicates)
+    except json.JSONDecodeError as exc:
+        raise SchemaError(f"invalid JSON: {exc}") from exc
