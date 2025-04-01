@@ -1,4 +1,4 @@
-"""Canonical JSON serialization.
+"""Canonical JSON serialization and stable hashing.
 
 Canonical form (slotvox canonical-json v1):
 
@@ -15,6 +15,7 @@ equal inputs, which is what provenance hashes and golden tests rely on.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from typing import Any
@@ -79,3 +80,12 @@ def canonical_loads(text: str | bytes) -> Any:
         return json.loads(text, object_pairs_hook=_reject_duplicates)
     except json.JSONDecodeError as exc:
         raise SchemaError(f"invalid JSON: {exc}") from exc
+
+
+def stable_hash(obj: Any) -> str:
+    """SHA-256 hex digest of the canonical JSON form of ``obj``.
+
+    Logically equal artifacts hash identically across processes and runs;
+    any change in structure, value, or numeric type changes the digest.
+    """
+    return hashlib.sha256(canonical_dumps(obj).encode("utf-8")).hexdigest()
