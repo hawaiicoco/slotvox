@@ -10,8 +10,8 @@ rather than deep inside a pipeline.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass
-from typing import Any, ClassVar
+from dataclasses import asdict, dataclass, fields
+from typing import Any, ClassVar, Self
 
 from slotvox.errors import ConfigError
 
@@ -86,3 +86,31 @@ class Config:
         data["kind"] = self.kind
         data["schema_version"] = CONFIG_SCHEMA_VERSION
         return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        """Reconstruct a config, strictly rejecting wrong kind/version/fields.
+
+        Every declared field must be present (``to_dict`` always emits all of
+        them), and no extra fields are accepted; this keeps serialized
+        configs unambiguous in both directions.
+        """
+        if not isinstance(data, dict):
+            raise ConfigError(f"config payload must be a dict, got {type(data).__name__}")
+        kind = data.get("kind")
+        if kind != cls.kind:
+            raise ConfigError(f"expected config kind {cls.kind!r}, got {kind!r}")
+        version = data.get("schema_version")
+        if version != CONFIG_SCHEMA_VERSION:
+            raise ConfigError(
+                f"config kind {cls.kind!r} expects schema_version "
+                f"{CONFIG_SCHEMA_VERSION}, got {version!r}"
+            )
+        known = {f.name for f in fields(cls)}
+        unknown = set(data) - known - {"kind", "schema_version"}
+        if unknown:
+            raise ConfigError(f"config kind {cls.kind!r} got unknown fields: {sorted(unknown)}")
+        missing = known - set(data)
+        if missing:
+            raise ConfigError(f"config kind {cls.kind!r} is missing fields: {sorted(missing)}")
+        return cls(**{name: data[name] for name in known})
