@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, fields
 from typing import Any, ClassVar, Self
 
 from slotvox.errors import ConfigError
+from slotvox.util.jsoncanon import canonical_dumps, canonical_loads
 
 CONFIG_SCHEMA_VERSION = 1
 
@@ -114,3 +115,43 @@ class Config:
         if missing:
             raise ConfigError(f"config kind {cls.kind!r} is missing fields: {sorted(missing)}")
         return cls(**{name: data[name] for name in known})
+
+
+_REGISTRY: dict[str, type[Config]] = {}
+
+
+def register_config(cls: type[Config]) -> type[Config]:
+    """Class decorator making ``cls`` reachable via :func:`config_from_dict`."""
+    if not isinstance(cls.kind, str) or not cls.kind or cls.kind == "config":
+        raise ConfigError(f"{cls.__name__} must define a concrete kind, got {cls.kind!r}")
+    previous = _REGISTRY.get(cls.kind)
+    if previous is not None and previous is not cls:
+        raise ConfigError(f"duplicate config kind: {cls.kind!r}")
+    _REGISTRY[cls.kind] = cls
+    return cls
+
+
+def registered_kinds() -> tuple[str, ...]:
+    """All config kinds reachable from :func:`config_from_dict`, sorted."""
+    return tuple(sorted(_REGISTRY))
+
+
+def config_from_dict(data: dict[str, Any]) -> Config:
+    """Dispatch to the registered config class named by ``data["kind"]``."""
+    if not isinstance(data, dict):
+        raise ConfigError(f"config payload must be a dict, got {type(data).__name__}")
+    kind = data.get("kind")
+    cls = _REGISTRY.get(kind) if isinstance(kind, str) else None
+    if cls is None:
+        raise ConfigError(f"unknown config kind: {kind!r} (registered: {list(registered_kinds())})")
+    return cls.from_dict(data)
+
+
+def config_to_json(config: Config) -> str:
+    """Canonical JSON text for ``config``."""
+    return canonical_dumps(config.to_dict())
+
+
+def config_from_json(text: str | bytes) -> Config:
+    """Parse canonical JSON text into the registered config it names."""
+    return config_from_dict(canonical_loads(text))
