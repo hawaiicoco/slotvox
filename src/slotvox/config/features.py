@@ -1,10 +1,15 @@
-"""Log-mel front-end configuration."""
+"""Log-mel front-end configuration.
+
+``WINDOWS`` is re-exported from the audio layer so configuration and
+implementation can never disagree about the supported window names.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import ClassVar
 
+from slotvox.audio.framing import WINDOW_NAMES as WINDOWS
 from slotvox.config.base import (
     Config,
     register_config,
@@ -13,8 +18,6 @@ from slotvox.config.base import (
     require_str,
 )
 from slotvox.errors import ConfigError
-
-WINDOWS = ("hann", "hamming", "blackman")
 
 
 @dataclass(frozen=True)
