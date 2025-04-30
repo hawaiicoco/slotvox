@@ -46,3 +46,24 @@ def frame_signal(samples: np.ndarray, frame_length: int, hop: int) -> np.ndarray
         strides=(item * hop, item),
         writeable=False,
     )
+
+
+WINDOW_NAMES = ("hann", "hamming", "blackman")
+
+
+def window(name: str, length: int) -> np.ndarray:
+    """Periodic analysis window of ``length`` points (float64).
+
+    Periodic (DFT-even) windows are used because frames are analyzed with
+    the FFT; ``w[n] == w[length - n]`` holds for ``0 < n < length``.
+    """
+    if name not in WINDOW_NAMES:
+        raise ValidationError(f"unknown window {name!r}; expected one of {WINDOW_NAMES}")
+    _check_positive_int("length", length)
+    n = np.arange(length, dtype=np.float64)
+    angle = 2.0 * np.pi * n / length
+    if name == "hann":
+        return 0.5 - 0.5 * np.cos(angle)
+    if name == "hamming":
+        return 0.54 - 0.46 * np.cos(angle)
+    return 0.42 - 0.5 * np.cos(angle) + 0.08 * np.cos(2.0 * angle)
