@@ -26,8 +26,8 @@ class FeatureConfig(Config):
     """Log-mel front-end settings.
 
     Frames are ``frame_ms`` long, advance by ``hop_ms``, and are zero-padded
-    to ``n_fft`` before the FFT. ``fmax`` must stay within the Nyquist limit
-    (``sample_rate / 2``).
+    to ``n_fft`` before the FFT, so ``n_fft`` must cover at least one frame.
+    ``fmax`` must stay within the Nyquist limit (``sample_rate / 2``).
     """
 
     kind: ClassVar[str] = "feature"
@@ -52,6 +52,11 @@ class FeatureConfig(Config):
         require_int("FeatureConfig.n_fft", self.n_fft, minimum=2)
         if self.n_fft & (self.n_fft - 1):
             raise ConfigError(f"FeatureConfig.n_fft must be a power of two, got {self.n_fft}")
+        if self.n_fft < self.frame_length:
+            raise ConfigError(
+                f"FeatureConfig.n_fft must be >= frame_length ({self.frame_length}), "
+                f"got {self.n_fft}"
+            )
         require_int("FeatureConfig.n_mels", self.n_mels, minimum=1, maximum=512)
         nyquist = self.sample_rate / 2
         require_float("FeatureConfig.fmin", self.fmin, minimum=0.0)

@@ -22,6 +22,7 @@ def test_defaults_construct_and_derive_frame_geometry():
         {"hop_ms": 0},
         {"hop_ms": 26},
         {"n_fft": 511},
+        {"n_fft": 256},
         {"n_mels": 0},
         {"fmin": -1.0},
         {"fmin": 7600.0},
@@ -32,6 +33,12 @@ def test_defaults_construct_and_derive_frame_geometry():
 def test_invalid_settings_rejected(kwargs):
     with pytest.raises(ConfigError):
         FeatureConfig(**kwargs)
+
+
+def test_n_fft_must_cover_one_frame():
+    with pytest.raises(ConfigError, match="frame_length"):
+        FeatureConfig(sample_rate=16000, frame_ms=64, n_fft=512)
+    assert FeatureConfig(sample_rate=16000, frame_ms=32, n_fft=512).frame_length == 512
 
 
 def test_fmax_at_nyquist_boundary_accepted():
