@@ -77,3 +77,36 @@ def tone(
     t = time_base(n_samples, sample_rate)
     wave = float(amplitude) * np.sin(2.0 * np.pi * float(freq) * t + float(phase))
     return wave.astype(SIGNAL_DTYPE)
+
+
+def chirp(
+    f_start: float,
+    f_end: float,
+    n_samples: int,
+    sample_rate: int,
+    *,
+    amplitude: float = 1.0,
+) -> np.ndarray:
+    """Linear frequency sweep from ``f_start`` to ``f_end`` Hz.
+
+    The instantaneous frequency at time ``t`` (within duration ``T``) is
+    ``f_start + (f_end - f_start) * t / T``, obtained from the quadratic
+    phase ``2*pi*(f_start*t + (f_end - f_start)*t^2 / (2*T))``.
+    """
+    _check_rate(sample_rate)
+    _check_n(n_samples)
+    _check_freq(f_start, sample_rate)
+    _check_freq(f_end, sample_rate)
+    _check_amplitude(amplitude)
+    if not float(f_start) < float(f_end):
+        raise ValidationError(f"chirp requires f_start < f_end, got {f_start} >= {f_end}")
+    if n_samples == 0:
+        return np.zeros(0, dtype=SIGNAL_DTYPE)
+    duration = n_samples / sample_rate
+    t = time_base(n_samples, sample_rate)
+    phase = (
+        2.0
+        * np.pi
+        * (float(f_start) * t + (float(f_end) - float(f_start)) * t**2 / (2.0 * duration))
+    )
+    return (float(amplitude) * np.sin(phase)).astype(SIGNAL_DTYPE)
