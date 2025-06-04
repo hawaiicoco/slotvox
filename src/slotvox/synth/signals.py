@@ -110,3 +110,67 @@ def chirp(
         * (float(f_start) * t + (float(f_end) - float(f_start)) * t**2 / (2.0 * duration))
     )
     return (float(amplitude) * np.sin(phase)).astype(SIGNAL_DTYPE)
+
+
+MAX_FORMANTS = 8
+
+
+def formant_pattern(
+    formants: list[float] | tuple[float, ...],
+    n_samples: int,
+    sample_rate: int,
+    *,
+    amplitude: float = 1.0,
+) -> np.ndarray:
+    """Sum of sine "formants" with 1/k weights, peak-normalized.
+
+    A crude formant-like stack that gives slot values a timbral signature;
+    it is synthetic signaling, not a vocal-tract model. ``formants`` must be
+    strictly ascending frequencies within (0, Nyquist].
+    """
+    _check_rate(sample_rate)
+    _check_n(n_samples)
+    _check_amplitude(amplitude)
+    if isinstance(formants, (str, bytes)) or not isinstance(formants, (list, tuple)):
+        raise ValidationError(f"formants must be a list/tuple of frequencies, got {formants!r}")
+    if not 1 <= len(formants) <= MAX_FORMANTS:
+        raise ValidationError(f"formants needs 1..{MAX_FORMANTS} entries, got {len(formants)}")
+    previous = 0.0
+    for value in formants:
+        _check_freq(value, sample_rate)
+        if float(value) <= previous:
+            raise ValidationError(f"formants must be strictly ascending, got {list(formants)}")
+        previous = float(value)
+    t = time_base(n_samples, sample_rate)
+    signal = np.zeros(n_samples, dtype=np.float64)
+    for index, value in enumerate(formants):
+        signal += np.sin(2.0 * np.pi * float(value) * t) / (index + 1)
+    peak = float(np.max(np.abs(signal))) if n_samples else 0.0
+    if peak > 0.0:
+        signal = signal * (float(amplitude) / peak)
+    return signal.astype(SIGNAL_DTYPE)
+
+
+def noise(
+    n_samples: int,
+    sample_rate: int,
+    *,
+    amplitude: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """White Gaussian noise with standard deviation ``amplitude / 3``.
+
+    Randomness flows only through the explicit ``rng`` (see
+    :func:`slotvox.util.seed.make_rng`), so results are reproducible per
+    seed. Output is clipped to [-1, 1]; with ``amplitude <= 1`` clipping is
+    a >3-sigma event per sample and measurably rare.
+    """
+    _check_rate(sample_rate)
+    _check_n(n_samples)
+    _check_amplitude(amplitude)
+    if not isinstance(rng, np.random.Generator):
+        raise ValidationError(
+            f"rng must be a numpy Generator (see make_rng), got {type(rng).__name__}"
+        )
+    values = rng.standard_normal(n_samples) * (float(amplitude) / 3.0)
+    return np.clip(values, -1.0, 1.0).astype(SIGNAL_DTYPE)
