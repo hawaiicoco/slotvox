@@ -16,7 +16,10 @@ import numpy as np
 
 from slotvox.audio.wav import WavAudio
 from slotvox.errors import ValidationError
-from slotvox.synth.segments import Segment
+from slotvox.synth.mix import apply_snr, fade_edges
+from slotvox.synth.segments import Segment, render_segment, validate_params
+from slotvox.synth.signals import _check_rate, noise, silence
+from slotvox.util.seed import make_rng
 
 
 @dataclass(frozen=True)
@@ -120,3 +123,93 @@ class SyntheticUtterance:
             segments=tuple(Segment.from_dict(item) for item in data["segments"]),
             snr_db=data["snr_db"],
         )
+
+
+@dataclass(frozen=True)
+class SegmentPlan:
+    """Pre-render recipe for one segment of a synthetic utterance."""
+
+    label: str
+    kind: str
+    duration_ms: int
+    params: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.label, str) or not self.label:
+            raise ValidationError("SegmentPlan.label must be a non-empty string")
+        validate_params(self.kind, self.params)
+        if isinstance(self.duration_ms, bool) or not isinstance(self.duration_ms, int):
+            raise ValidationError(
+                f"SegmentPlan.duration_ms must be an int, got {self.duration_ms!r}"
+            )
+        if not 1 <= self.duration_ms <= 60000:
+            raise ValidationError(
+                f"SegmentPlan.duration_ms must be within [1, 60000], got {self.duration_ms}"
+            )
+
+
+def render_utterance(
+    plans: list[SegmentPlan] | tuple[SegmentPlan, ...],
+    sample_rate: int,
+    *,
+    gap_ms: int = 20,
+    snr_db: float | None = None,
+    seed: int = 0,
+    amplitude: float = 0.8,
+) -> SyntheticUtterance:
+    """Render plans into one utterance with exact by-construction boundaries.
+
+    Layout is ``[gap][seg1][gap][seg2]...[gap]``. When ``snr_db`` is set,
+    white noise drawn from ``make_rng(seed)`` is mixed over the whole clip;
+    boundaries stay valid because mixing preserves length.
+    """
+    _check_rate(sample_rate)
+    if isinstance(plans, (str, bytes)) or not isinstance(plans, (list, tuple)) or not plans:
+        raise ValidationError("render_utterance needs a non-empty list/tuple of SegmentPlan")
+    for plan in plans:
+        if not isinstance(plan, SegmentPlan):
+            raise ValidationError(
+                f"plans must contain SegmentPlan instances, got {type(plan).__name__}"
+            )
+    if isinstance(gap_ms, bool) or not isinstance(gap_ms, int) or gap_ms < 0:
+        raise ValidationError(f"gap_ms must be a non-negative integer, got {gap_ms!r}")
+    if snr_db is not None and (
+        isinstance(snr_db, bool)
+        or not isinstance(snr_db, (int, float))
+        or not math.isfinite(snr_db)
+    ):
+        raise ValidationError(f"snr_db must be a finite number or None, got {snr_db!r}")
+    rng = make_rng(seed)
+
+    gap_n = sample_rate * gap_ms // 1000
+    pieces = [silence(gap_n)]
+    segments: list[Segment] = []
+    cursor = gap_n
+    for plan in plans:
+        n = sample_rate * plan.duration_ms // 1000
+        if n < 1:
+            raise ValidationError(
+                f"segment {plan.label!r} renders to zero samples; increase duration_ms"
+            )
+        rendered = render_segment(plan.kind, plan.params, n, sample_rate, amplitude=amplitude)
+        pieces.append(fade_edges(rendered, sample_rate))
+        pieces.append(silence(gap_n))
+        segments.append(
+            Segment(
+                label=plan.label,
+                kind=plan.kind,
+                start_sample=cursor,
+                end_sample=cursor + n,
+                params=dict(plan.params),
+            )
+        )
+        cursor += n + gap_n
+    samples = np.concatenate(pieces)
+    if snr_db is not None:
+        overlay = noise(samples.shape[0], sample_rate, amplitude=0.5, rng=rng)
+        samples = apply_snr(samples, overlay, float(snr_db))
+    return SyntheticUtterance(
+        audio=WavAudio(samples=samples, sample_rate=sample_rate),
+        segments=tuple(segments),
+        snr_db=None if snr_db is None else float(snr_db),
+    )
