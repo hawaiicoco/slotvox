@@ -121,3 +121,45 @@ class SlotTypeSpec:
             "constraint",
             _normalize_constraint(self.value_type, self.constraint, self.name),
         )
+
+    def check_value(self, value: Any) -> None:
+        """Validate a concrete slot value against this spec.
+
+        Accepts exactly the values the constraint describes and rejects
+        everything else with a message naming the slot — validation in both
+        directions is part of the contract.
+        """
+        if self.value_type == "enum":
+            if not isinstance(value, str) or value not in self.constraint["choices"]:
+                raise ValidationError(
+                    f"slot {self.name!r} value {value!r} is not one of the allowed choices"
+                )
+        elif self.value_type == "number":
+            number = _finite_number(value, f"slot {self.name!r} value")
+            minimum = self.constraint.get("minimum")
+            maximum = self.constraint.get("maximum")
+            if minimum is not None and number < minimum:
+                raise ValidationError(
+                    f"slot {self.name!r} value {number} is below minimum {minimum}"
+                )
+            if maximum is not None and number > maximum:
+                raise ValidationError(
+                    f"slot {self.name!r} value {number} exceeds maximum {maximum}"
+                )
+        elif self.value_type == "time":
+            if not isinstance(value, str) or not TIME_PATTERN.fullmatch(value):
+                raise ValidationError(
+                    f"slot {self.name!r} requires a 24h HH:MM time string, got {value!r}"
+                )
+        else:
+            if not isinstance(value, str):
+                raise ValidationError(
+                    f"slot {self.name!r} requires a string value, got {type(value).__name__}"
+                )
+            min_length = self.constraint["min_length"]
+            max_length = self.constraint["max_length"]
+            if not min_length <= len(value) <= max_length:
+                raise ValidationError(
+                    f"slot {self.name!r} value length {len(value)} is outside "
+                    f"[{min_length}, {max_length}]"
+                )
