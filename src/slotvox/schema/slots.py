@@ -163,3 +163,34 @@ class SlotTypeSpec:
                     f"slot {self.name!r} value length {len(value)} is outside "
                     f"[{min_length}, {max_length}]"
                 )
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-native dict form (enum choices become a list)."""
+        constraint = dict(self.constraint)
+        if "choices" in constraint:
+            constraint["choices"] = list(constraint["choices"])
+        return {
+            "name": self.name,
+            "value_type": self.value_type,
+            "constraint": constraint,
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> SlotTypeSpec:
+        """Reconstruct a spec, rejecting unknown or missing keys."""
+        if not isinstance(data, dict):
+            raise ValidationError(f"slot payload must be a dict, got {type(data).__name__}")
+        required = {"name", "value_type", "constraint", "description"}
+        unknown = sorted(set(data) - required)
+        missing = sorted(required - set(data))
+        if unknown:
+            raise ValidationError(f"slot dict got unknown keys: {unknown}")
+        if missing:
+            raise ValidationError(f"slot dict is missing keys: {missing}")
+        return cls(
+            name=data["name"],
+            value_type=data["value_type"],
+            constraint=data["constraint"],
+            description=data["description"],
+        )
