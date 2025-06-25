@@ -75,3 +75,31 @@ class IntentDefinition:
     def required_slots(self) -> tuple[str, ...]:
         """Non-optional slot names, in declaration order."""
         return tuple(ref.slot for ref in self.slots if not ref.optional)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-native dict form."""
+        return {
+            "name": self.name,
+            "slots": [ref.to_dict() for ref in self.slots],
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> IntentDefinition:
+        """Reconstruct an intent, rejecting unknown or missing keys."""
+        if not isinstance(data, dict):
+            raise ValidationError(f"intent payload must be a dict, got {type(data).__name__}")
+        required = {"name", "slots", "description"}
+        unknown = sorted(set(data) - required)
+        missing = sorted(required - set(data))
+        if unknown:
+            raise ValidationError(f"intent dict got unknown keys: {unknown}")
+        if missing:
+            raise ValidationError(f"intent dict is missing keys: {missing}")
+        if not isinstance(data["slots"], list):
+            raise ValidationError("intent 'slots' must be a list")
+        return cls(
+            name=data["name"],
+            slots=tuple(SlotRef.from_dict(item) for item in data["slots"]),
+            description=data["description"],
+        )
