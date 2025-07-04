@@ -10,11 +10,13 @@ explicit schema id and version.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from slotvox.errors import ValidationError
+from slotvox.errors import SchemaError, ValidationError
 from slotvox.schema.intents import IntentDefinition
 from slotvox.schema.naming import validate_id
 from slotvox.schema.slots import SlotTypeSpec
+from slotvox.util.jsoncanon import stable_hash
 
 DOMAIN_SCHEMA_ID = "slotvox.domain"
 DOMAIN_SCHEMA_VERSION = 1
@@ -95,3 +97,49 @@ class DomainSpec:
             if intent.name == name:
                 return intent
         raise ValidationError(f"domain {self.domain!r} has no intent {name!r}")
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-native dict form under the domain schema envelope."""
+        return {
+            "schema": DOMAIN_SCHEMA_ID,
+            "schema_version": self.schema_version,
+            "domain": self.domain,
+            "description": self.description,
+            "slots": [spec.to_dict() for spec in self.slots],
+            "intents": [intent.to_dict() for intent in self.intents],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> DomainSpec:
+        """Reconstruct a domain, rejecting unknown keys, ids, and versions."""
+        if not isinstance(data, dict):
+            raise SchemaError(f"domain payload must be a dict, got {type(data).__name__}")
+        required = {"schema", "schema_version", "domain", "description", "slots", "intents"}
+        unknown = sorted(set(data) - required)
+        missing = sorted(required - set(data))
+        if unknown:
+            raise SchemaError(f"domain dict got unknown keys: {unknown}")
+        if missing:
+            raise SchemaError(f"domain dict is missing keys: {missing}")
+        if data["schema"] != DOMAIN_SCHEMA_ID:
+            raise SchemaError(
+                f"unknown schema id {data['schema']!r}; expected {DOMAIN_SCHEMA_ID!r}"
+            )
+        if data["schema_version"] != DOMAIN_SCHEMA_VERSION:
+            raise SchemaError(
+                f"unsupported schema version {data['schema_version']!r}; "
+                f"this build parses {DOMAIN_SCHEMA_VERSION}"
+            )
+        if not isinstance(data["slots"], list) or not isinstance(data["intents"], list):
+            raise SchemaError("domain 'slots' and 'intents' must be lists")
+        return cls(
+            domain=data["domain"],
+            slots=tuple(SlotTypeSpec.from_dict(item) for item in data["slots"]),
+            intents=tuple(IntentDefinition.from_dict(item) for item in data["intents"]),
+            description=data["description"],
+        )
+
+    @property
+    def domain_hash(self) -> str:
+        """Provenance hash of the full definition (canonical JSON, SHA-256)."""
+        return stable_hash(self.to_dict())
