@@ -7,6 +7,7 @@ utterances live here, and nothing is tied to a real product or corpus.
 
 from __future__ import annotations
 
+from slotvox.errors import ValidationError
 from slotvox.schema.domains import DomainSpec
 from slotvox.schema.intents import IntentDefinition, SlotRef
 from slotvox.schema.slots import SlotTypeSpec
@@ -76,3 +77,87 @@ def music_control_domain() -> DomainSpec:
     return DomainSpec(
         domain="music-control", slots=slots, intents=intents, description="音乐控制域"
     )
+
+
+def navigation_domain() -> DomainSpec:
+    """Point-to-point navigation and nearby search."""
+    slots = (
+        SlotTypeSpec("destination", "text", {"min_length": 1, "max_length": 64}, "目的地"),
+        SlotTypeSpec("origin", "text", {"min_length": 1, "max_length": 64}, "出发地"),
+        SlotTypeSpec(
+            "transport", "enum", {"choices": ["walk", "drive", "transit", "bike"]}, "出行方式"
+        ),
+        SlotTypeSpec(
+            "category", "enum", {"choices": ["food", "fuel", "parking", "hotel"]}, "地点类别"
+        ),
+    )
+    intents = (
+        IntentDefinition(
+            "navigate-to",
+            (SlotRef("destination"), SlotRef("origin", True), SlotRef("transport", True)),
+            "导航",
+        ),
+        IntentDefinition(
+            "find-route",
+            (SlotRef("origin"), SlotRef("destination"), SlotRef("transport", True)),
+            "查路线",
+        ),
+        IntentDefinition("search-nearby", (SlotRef("category"),), "附近搜索"),
+    )
+    return DomainSpec(domain="navigation", slots=slots, intents=intents, description="导航出行域")
+
+
+def calendar_domain() -> DomainSpec:
+    """Calendar events, listing, cancellation, and reminders."""
+    slots = (
+        SlotTypeSpec("event-title", "text", {"min_length": 1, "max_length": 64}, "事件标题"),
+        SlotTypeSpec("start-time", "time", description="开始时间"),
+        SlotTypeSpec("end-time", "time", description="结束时间"),
+        SlotTypeSpec("day", "enum", {"choices": ["今天", "明天", "后天", "周末"]}, "日期"),
+        SlotTypeSpec("participant", "text", {"min_length": 1, "max_length": 32}, "参与人"),
+    )
+    intents = (
+        IntentDefinition(
+            "create-event",
+            (
+                SlotRef("event-title"),
+                SlotRef("start-time"),
+                SlotRef("end-time", True),
+                SlotRef("participant", True),
+            ),
+            "创建日程",
+        ),
+        IntentDefinition("list-events", (SlotRef("day", True),), "查询日程"),
+        IntentDefinition("cancel-event", (SlotRef("event-title"),), "取消日程"),
+        IntentDefinition(
+            "set-reminder",
+            (SlotRef("event-title"), SlotRef("start-time"), SlotRef("day", True)),
+            "设置提醒",
+        ),
+    )
+    return DomainSpec(domain="calendar", slots=slots, intents=intents, description="日程管理域")
+
+
+BUILTIN_DOMAIN_IDS = ("calendar", "music-control", "navigation", "weather")
+
+_BUILDERS = {
+    "calendar": calendar_domain,
+    "music-control": music_control_domain,
+    "navigation": navigation_domain,
+    "weather": weather_domain,
+}
+
+
+def builtin_domain(domain_id: str) -> DomainSpec:
+    """Return one of the built-in domains by id (strict)."""
+    builder = _BUILDERS.get(domain_id) if isinstance(domain_id, str) else None
+    if builder is None:
+        raise ValidationError(
+            f"unknown built-in domain {domain_id!r}; expected one of {BUILTIN_DOMAIN_IDS}"
+        )
+    return builder()
+
+
+def builtin_domains() -> tuple[DomainSpec, ...]:
+    """All built-in domains, ordered by id."""
+    return tuple(builtin_domain(domain_id) for domain_id in BUILTIN_DOMAIN_IDS)
