@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 
 from slotvox.errors import ValidationError
+from slotvox.schema.domains import DomainSpec
 from slotvox.schema.naming import validate_id
 
 LANGUAGES = ("zh", "en")
@@ -82,3 +83,45 @@ class AnnotatedUtterance:
     def tag_slot_names(self) -> tuple[str, ...]:
         """Sorted unique slot names appearing in tags."""
         return tuple(sorted({tag[2:] for tag in self.tags if tag != "O"}))
+
+    def validate_against(self, domain: DomainSpec) -> None:
+        """Enforce intent/slot vocabulary against ``domain``, strictly.
+
+        Rejections (both directions of the contract):
+        - the intent must exist in the domain,
+        - every tagged slot must exist in the domain vocabulary,
+        - every tagged slot must be declared by the intent,
+        - every required (non-optional) slot of the intent must be tagged.
+        """
+        if not isinstance(domain, DomainSpec):
+            raise ValidationError(
+                f"validate_against expects a DomainSpec, got {type(domain).__name__}"
+            )
+        try:
+            intent = domain.intent(self.intent)
+        except ValidationError as exc:
+            raise ValidationError(
+                f"unknown intent {self.intent!r} for domain {domain.domain!r}"
+            ) from exc
+        domain_slots = set(domain.slot_names)
+        declared = set(intent.slot_names)
+        seen: set[str] = set()
+        for tag in self.tags:
+            if tag == "O":
+                continue
+            slot = tag[2:]
+            if slot not in domain_slots:
+                raise ValidationError(
+                    f"tag references slot {slot!r} unknown in domain {domain.domain!r}"
+                )
+            if slot not in declared:
+                raise ValidationError(
+                    f"intent {self.intent!r} does not take slot {slot!r} "
+                    f"in domain {domain.domain!r}"
+                )
+            seen.add(slot)
+        missing = [name for name in intent.required_slots if name not in seen]
+        if missing:
+            raise ValidationError(
+                f"annotation for intent {self.intent!r} is missing required slots: {missing}"
+            )
