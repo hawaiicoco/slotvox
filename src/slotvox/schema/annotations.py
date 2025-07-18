@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from slotvox.errors import ValidationError
 from slotvox.schema.domains import DomainSpec
@@ -125,3 +126,35 @@ class AnnotatedUtterance:
             raise ValidationError(
                 f"annotation for intent {self.intent!r} is missing required slots: {missing}"
             )
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-native dict form."""
+        return {
+            "utterance_id": self.utterance_id,
+            "language": self.language,
+            "tokens": list(self.tokens),
+            "tags": list(self.tags),
+            "intent": self.intent,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> AnnotatedUtterance:
+        """Reconstruct an annotation, rejecting unknown or missing keys."""
+        if not isinstance(data, dict):
+            raise ValidationError(f"annotation payload must be a dict, got {type(data).__name__}")
+        required = {"utterance_id", "language", "tokens", "tags", "intent"}
+        unknown = sorted(set(data) - required)
+        missing = sorted(required - set(data))
+        if unknown:
+            raise ValidationError(f"annotation dict got unknown keys: {unknown}")
+        if missing:
+            raise ValidationError(f"annotation dict is missing keys: {missing}")
+        if not isinstance(data["tokens"], list) or not isinstance(data["tags"], list):
+            raise ValidationError("annotation 'tokens' and 'tags' must be lists")
+        return cls(
+            utterance_id=data["utterance_id"],
+            language=data["language"],
+            tokens=tuple(data["tokens"]),
+            tags=tuple(data["tags"]),
+            intent=data["intent"],
+        )
