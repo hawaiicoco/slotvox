@@ -73,3 +73,61 @@ def is_valid_tag(tag: str, *, bioes: bool = False) -> bool:
     if not bioes and prefix in ("E", "S"):
         return False
     return True
+
+
+def _sequence(value, name: str = "tags") -> tuple:
+    """Coerce a list/tuple of items, rejecting strings and other types."""
+    if isinstance(value, (str, bytes)):
+        raise TaggingError(f"{name} must be a sequence of strings, got {type(value).__name__}")
+    if not isinstance(value, (list, tuple)):
+        raise TaggingError(f"{name} must be a list/tuple, got {type(value).__name__}")
+    return tuple(value)
+
+
+def validate_sequence(tags, *, bioes: bool = False) -> None:
+    """Raise TaggingError unless ``tags`` is structurally valid.
+
+    BIO rules: an ``I-x`` must continue an open ``x`` span (previous tag
+    ``B-x`` or ``I-x``). BIOES additionally requires spans opened with
+    ``B-x`` to close with ``E-x`` before anything else starts, ``S-x`` to
+    stand alone, and no unclosed span at the end.
+    """
+    items = _sequence(tags)
+    open_slot: str | None = None
+    for index, tag in enumerate(items):
+        prefix, slot = parse_tag(tag)
+        if not bioes and prefix in ("E", "S"):
+            raise TaggingError(f"tag {index} ({tag!r}) is BIOES-only; pass bioes=True")
+        if prefix == OUTSIDE:
+            open_slot = None
+        elif prefix == "B":
+            if bioes and open_slot is not None:
+                raise TaggingError(
+                    f"tag {index} ({tag!r}) starts a span before closing {open_slot!r}"
+                )
+            open_slot = slot
+        elif prefix == "S":
+            if open_slot is not None:
+                raise TaggingError(f"tag {index} ({tag!r}) appears inside an open span")
+        elif prefix == "I":
+            if slot != open_slot:
+                raise TaggingError(
+                    f"tag {index} ({tag!r}) does not continue an open span (open: {open_slot!r})"
+                )
+        else:  # "E"
+            if slot != open_slot:
+                raise TaggingError(
+                    f"tag {index} ({tag!r}) closes span {open_slot!r} it never opened"
+                )
+            open_slot = None
+    if bioes and open_slot is not None:
+        raise TaggingError(f"sequence ends with an unclosed span {open_slot!r} (missing E/S)")
+
+
+def is_valid_sequence(tags, *, bioes: bool = False) -> bool:
+    """Non-raising companion of :func:`validate_sequence`."""
+    try:
+        validate_sequence(tags, bioes=bioes)
+        return True
+    except TaggingError:
+        return False
