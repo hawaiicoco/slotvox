@@ -12,13 +12,21 @@ authority the data factory and the evaluation metrics defer to.
 
 from __future__ import annotations
 
-from slotvox.errors import TaggingError
+from slotvox.errors import TaggingError, ValidationError
 from slotvox.schema.naming import validate_id
 
 BIO_PREFIXES = ("B", "I")
 BIOES_PREFIXES = ("B", "I", "E", "S")
 OUTSIDE = "O"
 REPAIR_POLICIES = ("strict", "drop", "promote")
+
+
+def _check_slot_id(slot: str, field: str) -> str:
+    """Validate a slot id, surfacing failures as TaggingError."""
+    try:
+        return validate_id(slot, field)
+    except ValidationError as exc:
+        raise TaggingError(str(exc)) from exc
 
 
 def parse_tag(tag: str) -> tuple[str, str | None]:
@@ -38,7 +46,7 @@ def parse_tag(tag: str) -> tuple[str, str | None]:
         raise TaggingError(
             f"tag {tag!r} has unknown prefix {prefix!r}; expected one of {BIOES_PREFIXES} or 'O'"
         )
-    validate_id(slot, f"tag slot name in {tag!r}")
+    _check_slot_id(slot, f"tag slot name in {tag!r}")
     return prefix, slot
 
 
@@ -52,7 +60,7 @@ def format_tag(prefix: str, slot: str | None) -> str:
         raise TaggingError(f"unknown tag prefix {prefix!r}")
     if not isinstance(slot, str) or not slot:
         raise TaggingError(f"prefix {prefix!r} requires a slot name, got {slot!r}")
-    validate_id(slot, "format_tag slot")
+    _check_slot_id(slot, "format_tag slot")
     return f"{prefix}-{slot}"
 
 
