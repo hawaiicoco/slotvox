@@ -12,6 +12,8 @@ authority the data factory and the evaluation metrics defer to.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from slotvox.errors import TaggingError, ValidationError
 from slotvox.schema.naming import validate_id
 
@@ -131,3 +133,66 @@ def is_valid_sequence(tags, *, bioes: bool = False) -> bool:
         return True
     except TaggingError:
         return False
+
+
+@dataclass(frozen=True)
+class Span:
+    """A labeled token span ``[start, end)``."""
+
+    label: str
+    start: int
+    end: int
+
+    def __post_init__(self) -> None:
+        _check_slot_id(self.label, "Span.label")
+        for name in ("start", "end"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TaggingError(f"Span.{name} must be an int, got {value!r}")
+        if self.start < 0:
+            raise TaggingError(f"Span.start must be >= 0, got {self.start}")
+        if self.end <= self.start:
+            raise TaggingError(f"Span.end must be > start, got {self.end} <= {self.start}")
+
+    @property
+    def n_tokens(self) -> int:
+        """Span length in tokens."""
+        return self.end - self.start
+
+
+def tags_to_spans(tags) -> tuple[Span, ...]:
+    """Extract spans from a valid BIO or BIOES sequence (strict).
+
+    A sequence containing any ``E-``/``S-`` tag is interpreted as BIOES,
+    otherwise as BIO; invalid sequences raise TaggingError (repair first if
+    the policy is to tolerate raw model output). Adjacent spans with the
+    same label stay separate (``B-x B-x`` is two spans), which keeps the
+    tags↔spans mapping injective on valid input.
+    """
+    items = _sequence(tags)
+    bioes = any(parse_tag(tag)[0] in ("E", "S") for tag in items)
+    validate_sequence(items, bioes=bioes)
+    spans: list[Span] = []
+    open_slot: str | None = None
+    start = 0
+    for index, tag in enumerate(items):
+        prefix, slot = parse_tag(tag)
+        if prefix == OUTSIDE:
+            if open_slot is not None:
+                spans.append(Span(open_slot, start, index))
+                open_slot = None
+        elif prefix == "B":
+            if open_slot is not None:
+                spans.append(Span(open_slot, start, index))
+            open_slot, start = slot, index
+        elif prefix == "S":
+            if open_slot is not None:
+                spans.append(Span(open_slot, start, index))
+                open_slot = None
+            spans.append(Span(slot, index, index + 1))
+        elif prefix == "E":
+            spans.append(Span(slot, start, index + 1))
+            open_slot = None
+    if open_slot is not None:
+        spans.append(Span(open_slot, start, len(items)))
+    return tuple(spans)
