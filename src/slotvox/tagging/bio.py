@@ -196,3 +196,41 @@ def tags_to_spans(tags) -> tuple[Span, ...]:
     if open_slot is not None:
         spans.append(Span(open_slot, start, len(items)))
     return tuple(spans)
+
+
+def spans_to_tags(spans, n_tokens: int, *, bioes: bool = False) -> tuple[str, ...]:
+    """Build a tag sequence from sorted, non-overlapping spans.
+
+    The strict inverse of :func:`tags_to_spans`: spans must be sorted by
+    start, pairwise non-overlapping, and within ``n_tokens``. With
+    ``bioes=True`` single-token spans become ``S`` and multi-token spans
+    ``B..I..E``; otherwise plain BIO is produced.
+    """
+    if isinstance(n_tokens, bool) or not isinstance(n_tokens, int) or n_tokens < 0:
+        raise TaggingError(f"n_tokens must be a non-negative int, got {n_tokens!r}")
+    items = _sequence(spans, "spans")
+    for span in items:
+        if not isinstance(span, Span):
+            raise TaggingError(f"spans must contain Span instances, got {type(span).__name__}")
+        if span.end > n_tokens:
+            raise TaggingError(f"span {span} exceeds n_tokens {n_tokens}")
+    ordered = sorted(items, key=lambda span: (span.start, span.end))
+    if list(items) != list(ordered):
+        raise TaggingError("spans must be sorted by start")
+    previous_end = -1
+    for span in ordered:
+        if span.start < previous_end:
+            raise TaggingError(f"spans must not overlap, got {span} after end {previous_end}")
+        previous_end = span.end
+    tags = [OUTSIDE] * n_tokens
+    for span in ordered:
+        if bioes and span.n_tokens == 1:
+            tags[span.start] = format_tag("S", span.label)
+            continue
+        tags[span.start] = format_tag("B", span.label)
+        last = span.end - 1
+        for position in range(span.start + 1, span.end):
+            tags[position] = format_tag("I", span.label)
+        if bioes:
+            tags[last] = format_tag("E", span.label)
+    return tuple(tags)
