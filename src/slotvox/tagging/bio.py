@@ -234,3 +234,39 @@ def spans_to_tags(spans, n_tokens: int, *, bioes: bool = False) -> tuple[str, ..
         if bioes:
             tags[last] = format_tag("E", span.label)
     return tuple(tags)
+
+
+def repair_sequence(tags, policy: str = "strict") -> tuple[str, ...]:
+    """Return a structurally valid BIO sequence under an explicit policy.
+
+    - ``strict``: raise TaggingError on the first violation (no repair),
+    - ``drop``: replace each violating ``I-x`` with ``O``,
+    - ``promote``: replace each violating ``I-x`` with ``B-x``.
+
+    BIOES inputs are rejected: repair targets greedy BIO decoder output,
+    where E/S never appear. Results always pass :func:`validate_sequence`,
+    a property the tests check exhaustively on small alphabets.
+    """
+    if policy not in REPAIR_POLICIES:
+        raise TaggingError(f"unknown repair policy {policy!r}; expected one of {REPAIR_POLICIES}")
+    items = _sequence(tags)
+    if policy == "strict":
+        validate_sequence(items)
+        return items
+    repaired: list[str] = []
+    open_slot: str | None = None
+    for tag in items:
+        prefix, slot = parse_tag(tag)
+        if prefix in ("E", "S"):
+            raise TaggingError(f"repair_sequence expects BIO tags, got BIOES tag {tag!r}")
+        if prefix == "I" and slot != open_slot:
+            if policy == "drop":
+                repaired.append(OUTSIDE)
+                open_slot = None
+            else:
+                repaired.append(format_tag("B", slot))
+                open_slot = slot
+        else:
+            repaired.append(tag)
+            open_slot = slot if prefix in ("B", "I") else None
+    return tuple(repaired)
