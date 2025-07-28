@@ -270,3 +270,26 @@ def repair_sequence(tags, policy: str = "strict") -> tuple[str, ...]:
             repaired.append(tag)
             open_slot = slot if prefix in ("B", "I") else None
     return tuple(repaired)
+
+
+def bio_to_bioes(tags) -> tuple[str, ...]:
+    """Convert a valid BIO sequence to BIOES (single-token spans become S)."""
+    items = _sequence(tags)
+    spans = tags_to_spans(items)
+    return spans_to_tags(spans, len(items), bioes=True)
+
+
+def bioes_to_bio(tags) -> tuple[str, ...]:
+    """Convert a valid BIOES sequence to plain BIO (S becomes B, E becomes I)."""
+    items = _sequence(tags)
+    validate_sequence(items, bioes=True)
+    out: list[str] = []
+    for tag in items:
+        prefix, slot = parse_tag(tag)
+        if prefix == "S":
+            out.append(format_tag("B", slot))
+        elif prefix == "E":
+            out.append(format_tag("I", slot))
+        else:
+            out.append(tag)
+    return tuple(out)
