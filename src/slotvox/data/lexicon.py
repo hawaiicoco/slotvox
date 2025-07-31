@@ -127,3 +127,61 @@ register_lexicon(
         ),
     },
 )
+
+
+register_lexicon(
+    "music-control",
+    "zh",
+    {
+        "song": (
+            LexiconEntry("青花瓷", "青花瓷"),
+            LexiconEntry("稻香", "稻香"),
+            LexiconEntry("夜曲", "夜曲"),
+        ),
+        "artist": (
+            LexiconEntry("周杰伦", "周杰伦"),
+            LexiconEntry("邓紫棋", "邓紫棋"),
+        ),
+        "genre": (
+            LexiconEntry("流行", "pop"),
+            LexiconEntry("摇滚", "rock"),
+            LexiconEntry("爵士", "jazz"),
+        ),
+        "volume-level": (
+            LexiconEntry("三十", 30),
+            LexiconEntry("五十", 50),
+            LexiconEntry("八十", 80),
+        ),
+        "playlist": (
+            LexiconEntry("我的收藏", "我的收藏"),
+            LexiconEntry("跑步歌单", "跑步歌单"),
+        ),
+    },
+)
+
+
+register_lexicon(
+    "navigation",
+    "zh",
+    {
+        "destination": (
+            LexiconEntry("人民广场", "人民广场"),
+            LexiconEntry("虹桥机场", "虹桥机场"),
+            LexiconEntry("公司", "公司"),
+        ),
+        "origin": (
+            LexiconEntry("家", "家"),
+            LexiconEntry("学校", "学校"),
+        ),
+        "transport": (
+            LexiconEntry("步行", "walk"),
+            LexiconEntry("开车", "drive"),
+            LexiconEntry("地铁", "transit"),
+        ),
+        "category": (
+            LexiconEntry("餐厅", "food"),
+            LexiconEntry("加油站", "fuel"),
+            LexiconEntry("停车场", "parking"),
+        ),
+    },
+)
