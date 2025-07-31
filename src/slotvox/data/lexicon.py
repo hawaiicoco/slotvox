@@ -1,0 +1,129 @@
+"""Synthetic value lexicons for built-in domains.
+
+A lexicon lists, per slot, the ``(surface, value)`` pairs the factory can
+draw from: ``surface`` is the text as it appears in a transcription
+(tokenized per language), ``value`` is the semantic slot value checked
+against the domain's :class:`SlotTypeSpec`. English surfaces may map to the
+same canonical values as Chinese ones (a surface form is not a value).
+
+Everything here is invented fixture content for synthetic experiments —
+not real user data, places, songs, or schedules.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from slotvox.errors import ValidationError
+from slotvox.schema.annotations import LANGUAGES
+from slotvox.schema.builtins import builtin_domain
+from slotvox.schema.domains import DomainSpec
+
+
+@dataclass(frozen=True)
+class LexiconEntry:
+    """One (surface text, semantic value) pair for a slot."""
+
+    surface: str
+    value: Any
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.surface, str) or not self.surface:
+            raise ValidationError("LexiconEntry.surface must be a non-empty string")
+        if self.surface != self.surface.strip():
+            raise ValidationError(
+                f"LexiconEntry.surface must not have edge whitespace: {self.surface!r}"
+            )
+
+
+Lexicon = dict[str, tuple[LexiconEntry, ...]]
+
+_LEXICONS: dict[tuple[str, str], Lexicon] = {}
+
+
+def validate_lexicon(domain: DomainSpec, lexicon: Any) -> None:
+    """Validate a lexicon against a domain, strictly and in both directions.
+
+    Every listed slot must exist in the domain, entries must be non-empty,
+    surfaces unique per slot, and every value must satisfy the slot's
+    constraint (``check_value``).
+    """
+    if not isinstance(domain, DomainSpec):
+        raise ValidationError(f"validate_lexicon expects a DomainSpec, got {type(domain).__name__}")
+    if not isinstance(lexicon, dict) or not lexicon:
+        raise ValidationError("lexicon must be a non-empty dict of slot -> entries")
+    for slot, entries in lexicon.items():
+        spec = domain.slot_spec(slot)
+        if not isinstance(entries, tuple) or not entries:
+            raise ValidationError(f"lexicon slot {slot!r} must map to a non-empty tuple")
+        surfaces: set[str] = set()
+        for entry in entries:
+            if not isinstance(entry, LexiconEntry):
+                raise ValidationError(f"lexicon slot {slot!r} must contain LexiconEntry instances")
+            spec.check_value(entry.value)
+            if entry.surface in surfaces:
+                raise ValidationError(
+                    f"lexicon slot {slot!r} has duplicate surface {entry.surface!r}"
+                )
+            surfaces.add(entry.surface)
+
+
+def register_lexicon(domain_id: str, language: str, lexicon: Lexicon) -> None:
+    """Register (and validate) the lexicon for one domain and language."""
+    domain = builtin_domain(domain_id)
+    if language not in LANGUAGES:
+        raise ValidationError(f"language must be one of {LANGUAGES}, got {language!r}")
+    key = (domain_id, language)
+    if key in _LEXICONS:
+        raise ValidationError(f"lexicon already registered for {key}")
+    validate_lexicon(domain, lexicon)
+    _LEXICONS[key] = lexicon
+
+
+def slot_entries(domain_id: str, language: str, slot: str) -> tuple[LexiconEntry, ...]:
+    """Strict lookup of the entries for one slot."""
+    key = (domain_id, language)
+    lexicon = _LEXICONS.get(key)
+    if lexicon is None:
+        raise ValidationError(
+            f"no lexicon registered for domain {domain_id!r} language {language!r}"
+        )
+    entries = lexicon.get(slot)
+    if entries is None:
+        raise ValidationError(
+            f"lexicon for domain {domain_id!r} language {language!r} has no slot {slot!r}"
+        )
+    return entries
+
+
+def registered_lexicons() -> tuple[tuple[str, str], ...]:
+    """All (domain, language) keys with a registered lexicon, sorted."""
+    return tuple(sorted(_LEXICONS))
+
+
+register_lexicon(
+    "weather",
+    "zh",
+    {
+        "city": (
+            LexiconEntry("北京", "北京"),
+            LexiconEntry("上海", "上海"),
+            LexiconEntry("广州", "广州"),
+        ),
+        "day": (
+            LexiconEntry("今天", "今天"),
+            LexiconEntry("明天", "明天"),
+            LexiconEntry("周末", "周末"),
+        ),
+        "clock": (
+            LexiconEntry("七点半", "07:30"),
+            LexiconEntry("九点", "09:00"),
+        ),
+        "metric": (
+            LexiconEntry("气温", "temperature"),
+            LexiconEntry("下雨", "rain"),
+            LexiconEntry("风力", "wind"),
+        ),
+    },
+)
