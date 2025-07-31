@@ -101,6 +101,8 @@ def validate_sequence(tags, *, bioes: bool = False) -> None:
         if not bioes and prefix in ("E", "S"):
             raise TaggingError(f"tag {index} ({tag!r}) is BIOES-only; pass bioes=True")
         if prefix == OUTSIDE:
+            if bioes and open_slot is not None:
+                raise TaggingError(f"tag {index} ('O') appears before closing span {open_slot!r}")
             open_slot = None
         elif prefix == "B":
             if bioes and open_slot is not None:
