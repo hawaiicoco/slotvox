@@ -185,3 +185,33 @@ register_lexicon(
         ),
     },
 )
+
+
+register_lexicon(
+    "calendar",
+    "zh",
+    {
+        "event-title": (
+            LexiconEntry("开会", "开会"),
+            LexiconEntry("体检", "体检"),
+            LexiconEntry("面试", "面试"),
+        ),
+        "start-time": (
+            LexiconEntry("九点", "09:00"),
+            LexiconEntry("十四点半", "14:30"),
+        ),
+        "end-time": (
+            LexiconEntry("十点", "10:00"),
+            LexiconEntry("十六点", "16:00"),
+        ),
+        "day": (
+            LexiconEntry("今天", "今天"),
+            LexiconEntry("明天", "明天"),
+            LexiconEntry("周末", "周末"),
+        ),
+        "participant": (
+            LexiconEntry("张伟", "张伟"),
+            LexiconEntry("李娜", "李娜"),
+        ),
+    },
+)
