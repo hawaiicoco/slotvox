@@ -215,3 +215,104 @@ register_lexicon(
         ),
     },
 )
+
+
+register_lexicon(
+    "weather",
+    "en",
+    {
+        "city": (
+            LexiconEntry("Beijing", "北京"),
+            LexiconEntry("Shanghai", "上海"),
+        ),
+        "day": (
+            LexiconEntry("today", "今天"),
+            LexiconEntry("tomorrow", "明天"),
+        ),
+        "clock": (
+            LexiconEntry("seven thirty", "07:30"),
+            LexiconEntry("nine", "09:00"),
+        ),
+        "metric": (
+            LexiconEntry("temperature", "temperature"),
+            LexiconEntry("rain", "rain"),
+        ),
+    },
+)
+
+register_lexicon(
+    "music-control",
+    "en",
+    {
+        "song": (
+            LexiconEntry("Blue Porcelain", "青花瓷"),
+            LexiconEntry("Rice Fields", "稻香"),
+        ),
+        "artist": (
+            LexiconEntry("Zhou Jielun", "周杰伦"),
+            LexiconEntry("Deng Ziqi", "邓紫棋"),
+        ),
+        "genre": (
+            LexiconEntry("pop", "pop"),
+            LexiconEntry("rock", "rock"),
+        ),
+        "volume-level": (
+            LexiconEntry("thirty", 30),
+            LexiconEntry("fifty", 50),
+        ),
+        "playlist": (
+            LexiconEntry("my favorites", "我的收藏"),
+            LexiconEntry("running mix", "跑步歌单"),
+        ),
+    },
+)
+
+register_lexicon(
+    "navigation",
+    "en",
+    {
+        "destination": (
+            LexiconEntry("People's Square", "人民广场"),
+            LexiconEntry("Hongqiao Airport", "虹桥机场"),
+        ),
+        "origin": (
+            LexiconEntry("home", "家"),
+            LexiconEntry("school", "学校"),
+        ),
+        "transport": (
+            LexiconEntry("by car", "drive"),
+            LexiconEntry("on foot", "walk"),
+        ),
+        "category": (
+            LexiconEntry("restaurants", "food"),
+            LexiconEntry("parking", "parking"),
+        ),
+    },
+)
+
+register_lexicon(
+    "calendar",
+    "en",
+    {
+        "event-title": (
+            LexiconEntry("standup meeting", "开会"),
+            LexiconEntry("checkup", "体检"),
+        ),
+        "start-time": (
+            LexiconEntry("nine", "09:00"),
+            LexiconEntry("two thirty", "14:30"),
+        ),
+        "end-time": (
+            LexiconEntry("ten", "10:00"),
+            LexiconEntry("four", "16:00"),
+        ),
+        "day": (
+            LexiconEntry("today", "今天"),
+            LexiconEntry("tomorrow", "明天"),
+        ),
+        "participant": (
+            LexiconEntry("Zhang Wei", "张伟"),
+            LexiconEntry("Li Na", "李娜"),
+        ),
+    },
+)
