@@ -169,3 +169,93 @@ def templates_for(domain_id: str, language: str) -> tuple[PatternTemplate, ...]:
 def registered_templates() -> tuple[tuple[str, str], ...]:
     """All (domain, language) keys with registered templates, sorted."""
     return tuple(sorted(_TEMPLATES))
+
+
+register_templates(
+    "weather",
+    "zh",
+    (
+        PatternTemplate(
+            pattern_id="weather/query-weather/0",
+            intent="query-weather",
+            tokens=(_slot("city"),) + (_slot("day"),) + _lit("天", "气", "怎", "么", "样"),
+        ),
+        PatternTemplate(
+            pattern_id="weather/query-weather/1",
+            intent="query-weather",
+            tokens=_lit("帮", "我", "查") + (_slot("city"),) + _lit("天", "气"),
+        ),
+        PatternTemplate(
+            pattern_id="weather/query-forecast/0",
+            intent="query-forecast",
+            tokens=(_slot("day"),) + (_slot("city"),) + _lit("天", "气", "预", "报"),
+        ),
+        PatternTemplate(
+            pattern_id="weather/query-forecast/1",
+            intent="query-forecast",
+            tokens=(_slot("day"),) + _lit("会", "下", "雨", "吗"),
+        ),
+        PatternTemplate(
+            pattern_id="weather/weather-alert/0",
+            intent="weather-alert",
+            tokens=_lit("有", "天", "气", "预", "警", "吗"),
+        ),
+        PatternTemplate(
+            pattern_id="weather/weather-alert/1",
+            intent="weather-alert",
+            tokens=(_slot("city"),) + _lit("有", "预", "警", "吗"),
+        ),
+    ),
+)
+
+register_templates(
+    "music-control",
+    "zh",
+    (
+        PatternTemplate(
+            pattern_id="music-control/play-music/0",
+            intent="play-music",
+            tokens=_lit("播", "放") + (_slot("song"),),
+        ),
+        PatternTemplate(
+            pattern_id="music-control/play-music/1",
+            intent="play-music",
+            tokens=_lit("来", "一", "首") + (_slot("genre"),) + _lit("音", "乐"),
+        ),
+        PatternTemplate(
+            pattern_id="music-control/play-music/2",
+            intent="play-music",
+            tokens=_lit("播", "放") + (_slot("playlist"),),
+        ),
+        PatternTemplate(
+            pattern_id="music-control/pause-music/0",
+            intent="pause-music",
+            tokens=_lit("暂", "停", "播", "放"),
+        ),
+        PatternTemplate(
+            pattern_id="music-control/resume-music/0",
+            intent="resume-music",
+            tokens=_lit("继", "续", "播", "放"),
+        ),
+        PatternTemplate(
+            pattern_id="music-control/stop-music/0",
+            intent="stop-music",
+            tokens=_lit("停", "止", "播", "放"),
+        ),
+        PatternTemplate(
+            pattern_id="music-control/next-track/0",
+            intent="next-track",
+            tokens=_lit("下", "一", "首"),
+        ),
+        PatternTemplate(
+            pattern_id="music-control/previous-track/0",
+            intent="previous-track",
+            tokens=_lit("上", "一", "首"),
+        ),
+        PatternTemplate(
+            pattern_id="music-control/set-volume/0",
+            intent="set-volume",
+            tokens=_lit("音", "量", "调", "到") + (_slot("volume-level"),),
+        ),
+    ),
+)
