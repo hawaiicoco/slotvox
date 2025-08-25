@@ -332,3 +332,149 @@ register_templates(
         ),
     ),
 )
+
+
+register_templates(
+    "weather",
+    "en",
+    (
+        PatternTemplate(
+            pattern_id="weather/query-weather/0",
+            intent="query-weather",
+            tokens=_lit("what", "is", "the", "weather", "in") + (_slot("city"),),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="weather/query-weather/1",
+            intent="query-weather",
+            tokens=_lit("is", "it", "raining", "in") + (_slot("city"),),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="weather/query-forecast/0",
+            intent="query-forecast",
+            tokens=(_slot("day"),) + _lit("forecast", "for") + (_slot("city"),),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="weather/weather-alert/0",
+            intent="weather-alert",
+            tokens=_lit("any", "weather", "alerts"),
+            language="en",
+        ),
+    ),
+)
+
+register_templates(
+    "music-control",
+    "en",
+    (
+        PatternTemplate(
+            pattern_id="music-control/play-music/0",
+            intent="play-music",
+            tokens=_lit("play") + (_slot("song"),),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="music-control/pause-music/0",
+            intent="pause-music",
+            tokens=_lit("pause", "the", "music"),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="music-control/resume-music/0",
+            intent="resume-music",
+            tokens=_lit("resume", "the", "music"),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="music-control/stop-music/0",
+            intent="stop-music",
+            tokens=_lit("stop", "playing"),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="music-control/next-track/0",
+            intent="next-track",
+            tokens=_lit("next", "track"),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="music-control/previous-track/0",
+            intent="previous-track",
+            tokens=_lit("previous", "track"),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="music-control/set-volume/0",
+            intent="set-volume",
+            tokens=_lit("set", "volume", "to") + (_slot("volume-level"),),
+            language="en",
+        ),
+    ),
+)
+
+register_templates(
+    "navigation",
+    "en",
+    (
+        PatternTemplate(
+            pattern_id="navigation/navigate-to/0",
+            intent="navigate-to",
+            tokens=_lit("navigate", "to") + (_slot("destination"),),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="navigation/find-route/0",
+            intent="find-route",
+            tokens=_lit("route", "from")
+            + (_slot("origin"),)
+            + _lit("to")
+            + (_slot("destination"),),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="navigation/search-nearby/0",
+            intent="search-nearby",
+            tokens=_lit("find") + (_slot("category"),) + _lit("nearby"),
+            language="en",
+        ),
+    ),
+)
+
+register_templates(
+    "calendar",
+    "en",
+    (
+        PatternTemplate(
+            pattern_id="calendar/create-event/0",
+            intent="create-event",
+            tokens=_lit("create", "event")
+            + (_slot("event-title"),)
+            + _lit("at")
+            + (_slot("start-time"),),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="calendar/list-events/0",
+            intent="list-events",
+            tokens=_lit("list", "my", "events"),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="calendar/cancel-event/0",
+            intent="cancel-event",
+            tokens=_lit("cancel") + (_slot("event-title"),),
+            language="en",
+        ),
+        PatternTemplate(
+            pattern_id="calendar/set-reminder/0",
+            intent="set-reminder",
+            tokens=_lit("remind", "me", "at")
+            + (_slot("start-time"),)
+            + _lit("about")
+            + (_slot("event-title"),),
+            language="en",
+        ),
+    ),
+)
