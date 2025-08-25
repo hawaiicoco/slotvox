@@ -259,3 +259,76 @@ register_templates(
         ),
     ),
 )
+
+
+register_templates(
+    "navigation",
+    "zh",
+    (
+        PatternTemplate(
+            pattern_id="navigation/navigate-to/0",
+            intent="navigate-to",
+            tokens=_lit("导", "航", "到") + (_slot("destination"),),
+        ),
+        PatternTemplate(
+            pattern_id="navigation/navigate-to/1",
+            intent="navigate-to",
+            tokens=(_slot("transport"),) + _lit("去") + (_slot("destination"),),
+        ),
+        PatternTemplate(
+            pattern_id="navigation/find-route/0",
+            intent="find-route",
+            tokens=_lit("从")
+            + (_slot("origin"),)
+            + _lit("到")
+            + (_slot("destination"),)
+            + _lit("怎", "么", "走"),
+        ),
+        PatternTemplate(
+            pattern_id="navigation/search-nearby/0",
+            intent="search-nearby",
+            tokens=_lit("附", "近", "的") + (_slot("category"),),
+        ),
+    ),
+)
+
+register_templates(
+    "calendar",
+    "zh",
+    (
+        PatternTemplate(
+            pattern_id="calendar/create-event/0",
+            intent="create-event",
+            tokens=_lit("创", "建")
+            + (_slot("event-title"),)
+            + _lit("的")
+            + (_slot("start-time"),)
+            + _lit("日", "程"),
+        ),
+        PatternTemplate(
+            pattern_id="calendar/create-event/1",
+            intent="create-event",
+            tokens=(_slot("start-time"),) + _lit("开") + (_slot("event-title"),),
+        ),
+        PatternTemplate(
+            pattern_id="calendar/list-events/0",
+            intent="list-events",
+            tokens=_lit("查", "一", "下") + (_slot("day"),) + _lit("的", "安", "排"),
+        ),
+        PatternTemplate(
+            pattern_id="calendar/list-events/1",
+            intent="list-events",
+            tokens=_lit("我", "有", "哪", "些", "日", "程"),
+        ),
+        PatternTemplate(
+            pattern_id="calendar/cancel-event/0",
+            intent="cancel-event",
+            tokens=_lit("取", "消") + (_slot("event-title"),),
+        ),
+        PatternTemplate(
+            pattern_id="calendar/set-reminder/0",
+            intent="set-reminder",
+            tokens=_lit("提", "醒", "我") + (_slot("start-time"),) + (_slot("event-title"),),
+        ),
+    ),
+)
