@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from slotvox.config.generation import SPLITS
+from slotvox.config.generation import SPLITS, GenerationConfig
 from slotvox.errors import ValidationError
 from slotvox.util.seed import derive_seed, make_rng
 
@@ -66,3 +66,33 @@ def assign_keys_to_splits(
     for index, key in enumerate(order):
         buckets[non_empty[index % len(non_empty)]].append(key)
     return {split: tuple(sorted(bucket, key=_sort_key)) for split, bucket in buckets.items()}
+
+
+def speaker_splits(n_speakers: int, counts: Mapping[str, int], seed: int) -> dict[int, str]:
+    """Map speaker ids 0..n_speakers-1 to splits (disjoint by construction)."""
+    if isinstance(n_speakers, bool) or not isinstance(n_speakers, int) or n_speakers < 1:
+        raise ValidationError(f"n_speakers must be a positive int, got {n_speakers!r}")
+    buckets = assign_keys_to_splits(list(range(n_speakers)), counts, seed, name="speaker")
+    return {speaker: split for split, speakers in buckets.items() for speaker in speakers}
+
+
+def pattern_splits(
+    pattern_ids: Sequence[str], counts: Mapping[str, int], seed: int
+) -> dict[str, str]:
+    """Map pattern ids to splits (disjoint by construction)."""
+    buckets = assign_keys_to_splits(list(pattern_ids), counts, seed, name="pattern")
+    return {pattern: split for split, patterns in buckets.items() for pattern in patterns}
+
+
+def check_policy(policy: str) -> str:
+    """Validate a split policy name."""
+    if policy not in SPLIT_POLICIES:
+        raise ValidationError(f"unknown split policy {policy!r}; expected one of {SPLIT_POLICIES}")
+    return policy
+
+
+def check_config(config: Any) -> GenerationConfig:
+    """Validate that ``config`` is a GenerationConfig."""
+    if not isinstance(config, GenerationConfig):
+        raise ValidationError(f"config must be a GenerationConfig, got {type(config).__name__}")
+    return config
