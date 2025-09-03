@@ -14,10 +14,13 @@ from typing import Any
 import numpy as np
 
 from slotvox.config.generation import SPLITS
+from slotvox.data.lexicon import slot_entries
+from slotvox.data.patterns import PatternTemplate
 from slotvox.errors import ValidationError
 from slotvox.schema.annotations import AnnotatedUtterance
 from slotvox.synth.utterance import SyntheticUtterance
-from slotvox.tagging.bio import format_tag
+from slotvox.tagging.bio import OUTSIDE, format_tag
+from slotvox.tagging.tokenize import tokenize
 
 
 @dataclass(frozen=True)
@@ -105,3 +108,35 @@ class GeneratedExample:
             "n_samples": self.utterance.n_samples,
             "segments": [segment.to_dict() for segment in self.utterance.segments],
         }
+
+
+def instantiate_template(
+    domain_id: str,
+    language: str,
+    template: PatternTemplate,
+    rng: np.random.Generator,
+) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, tuple[str, ...]]]:
+    """Fill a template: tokens, BIO tags, and per-slot surface values."""
+    if not isinstance(domain_id, str) or not domain_id:
+        raise ValidationError("domain_id must be a non-empty string")
+    if not isinstance(template, PatternTemplate):
+        raise ValidationError(f"template must be a PatternTemplate, got {type(template).__name__}")
+    if not isinstance(rng, np.random.Generator):
+        raise ValidationError(
+            f"rng must be a numpy Generator (see make_rng), got {type(rng).__name__}"
+        )
+    tokens: list[str] = []
+    tags: list[str] = []
+    slot_values: dict[str, list[str]] = {}
+    for plan in template.tokens:
+        if not plan.is_slot:
+            tokens.append(plan.text)
+            tags.append(OUTSIDE)
+            continue
+        entries = slot_entries(domain_id, language, plan.slot)
+        entry = entries[int(rng.integers(len(entries)))]
+        for index, token in enumerate(tokenize(entry.surface, language)):
+            tokens.append(token)
+            tags.append(format_tag("B" if index == 0 else "I", plan.slot))
+        slot_values.setdefault(plan.slot, []).append(entry.surface)
+    return tuple(tokens), tuple(tags), {slot: tuple(v) for slot, v in slot_values.items()}
