@@ -14,13 +14,16 @@ from typing import Any
 import numpy as np
 
 from slotvox.config.generation import SPLITS
+from slotvox.data.acoustics import token_segment_plan
 from slotvox.data.lexicon import slot_entries
 from slotvox.data.patterns import PatternTemplate
 from slotvox.errors import ValidationError
 from slotvox.schema.annotations import AnnotatedUtterance
-from slotvox.synth.utterance import SyntheticUtterance
-from slotvox.tagging.bio import OUTSIDE, format_tag
+from slotvox.schema.domains import DomainSpec
+from slotvox.synth.utterance import SyntheticUtterance, render_utterance
+from slotvox.tagging.bio import OUTSIDE, format_tag, parse_tag
 from slotvox.tagging.tokenize import tokenize
+from slotvox.util.seed import make_rng
 
 
 @dataclass(frozen=True)
@@ -140,3 +143,55 @@ def instantiate_template(
             tags.append(format_tag("B" if index == 0 else "I", plan.slot))
         slot_values.setdefault(plan.slot, []).append(entry.surface)
     return tuple(tokens), tuple(tags), {slot: tuple(v) for slot, v in slot_values.items()}
+
+
+def render_example(
+    domain: DomainSpec,
+    template: PatternTemplate,
+    language: str,
+    *,
+    utterance_id: str,
+    split: str,
+    speaker_id: int,
+    snr_db: float | None,
+    seed: int,
+    sample_rate: int = 16000,
+    token_ms: int = 80,
+    gap_ms: int = 20,
+) -> GeneratedExample:
+    """Render one fully labeled example; deterministic given ``seed``."""
+    if not isinstance(domain, DomainSpec):
+        raise ValidationError(f"domain must be a DomainSpec, got {type(domain).__name__}")
+    rng = make_rng(seed)
+    tokens, tags, slot_values = instantiate_template(domain.domain, language, template, rng)
+    annotation = AnnotatedUtterance(
+        utterance_id=utterance_id,
+        language=language,
+        tokens=tokens,
+        tags=tags,
+        intent=template.intent,
+    )
+    annotation.validate_against(domain)
+    plans = []
+    for token, tag in zip(tokens, tags, strict=True):
+        prefix, slot = parse_tag(tag)
+        plans.append(
+            token_segment_plan(
+                domain.domain,
+                token,
+                None if prefix == OUTSIDE else slot,
+                duration_ms=token_ms,
+                speaker_id=speaker_id,
+            )
+        )
+    utterance = render_utterance(plans, sample_rate, gap_ms=gap_ms, snr_db=snr_db, seed=seed)
+    return GeneratedExample(
+        utterance_id=utterance_id,
+        split=split,
+        speaker_id=speaker_id,
+        snr_db=snr_db,
+        pattern_id=template.pattern_id,
+        annotation=annotation,
+        utterance=utterance,
+        slot_values=slot_values,
+    )
