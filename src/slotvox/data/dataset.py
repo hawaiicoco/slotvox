@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from slotvox.config.generation import SPLITS, GenerationConfig
-from slotvox.data.factory import GeneratedExample
-from slotvox.data.splits import check_policy
+from slotvox.data.factory import GeneratedExample, render_example
+from slotvox.data.patterns import templates_for
+from slotvox.data.splits import check_policy, pattern_splits, speaker_splits
 from slotvox.errors import ValidationError
 from slotvox.schema.annotations import LANGUAGES
 from slotvox.schema.builtins import builtin_domain
@@ -121,3 +122,79 @@ class GeneratedDataset:
             for example in self.examples
         ]
         return stable_hash({"provenance": self.provenance(), "examples": fingerprints})
+
+
+def generate_dataset(
+    config: GenerationConfig | None = None,
+    *,
+    language: str = "zh",
+    policy: str = "speaker",
+    seed: int | None = None,
+) -> GeneratedDataset:
+    """Generate a labeled synthetic dataset with leakage-free splits.
+
+    Deterministic: identical arguments produce identical labels, acoustics,
+    and hashes. Speaker policy keeps voices disjoint across splits; pattern
+    policy keeps phrasings disjoint (speakers may then repeat).
+    """
+    cfg = config if config is not None else GenerationConfig()
+    if not isinstance(cfg, GenerationConfig):
+        raise ValidationError(f"config must be a GenerationConfig, got {type(cfg).__name__}")
+    domain = builtin_domain(cfg.domain)
+    check_policy(policy)
+    if language not in LANGUAGES:
+        raise ValidationError(f"language must be one of {LANGUAGES}, got {language!r}")
+    base_seed = cfg.seed if seed is None else seed
+    make_rng(base_seed)
+    templates = templates_for(cfg.domain, language)
+    non_empty = [split for split in SPLITS if cfg.counts.get(split, 0) > 0]
+
+    split_speakers: dict[str, tuple[int, ...]] = {}
+    split_templates: dict[str, tuple[Any, ...]] = {}
+    if policy == "speaker":
+        buckets = speaker_splits(cfg.n_speakers, cfg.counts, base_seed)
+        for split in non_empty:
+            split_speakers[split] = tuple(
+                sorted(speaker for speaker, target in buckets.items() if target == split)
+            )
+            split_templates[split] = templates
+    else:
+        buckets_p = pattern_splits(
+            [template.pattern_id for template in templates], cfg.counts, base_seed
+        )
+        for split in non_empty:
+            wanted = {pid for pid, target in buckets_p.items() if target == split}
+            split_templates[split] = tuple(t for t in templates if t.pattern_id in wanted)
+            split_speakers[split] = tuple(range(cfg.n_speakers))
+
+    examples: list[GeneratedExample] = []
+    for split in SPLITS:
+        count = cfg.counts.get(split, 0)
+        if count == 0:
+            continue
+        speakers = split_speakers[split]
+        split_tpls = split_templates[split]
+        for index in range(count):
+            template = split_tpls[index % len(split_tpls)]
+            speaker_id = speakers[index % len(speakers)]
+            snr = float(cfg.noise_snr_db[index % len(cfg.noise_snr_db)])
+            examples.append(
+                render_example(
+                    domain,
+                    template,
+                    language,
+                    utterance_id=f"{split}-{index:05d}",
+                    split=split,
+                    speaker_id=speaker_id,
+                    snr_db=snr,
+                    seed=_example_seed(base_seed, split, index),
+                )
+            )
+    return GeneratedDataset(
+        domain_id=cfg.domain,
+        language=language,
+        policy=policy,
+        seed=base_seed,
+        config=cfg,
+        examples=tuple(examples),
+    )
