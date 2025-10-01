@@ -77,3 +77,49 @@ class TCNEncoder(nn.Module):
         for block in self.blocks:
             hidden = block(hidden)
         return hidden.transpose(1, 2)
+
+
+class GRUEncoder(nn.Module):
+    """``[B, T, input] -> [B, T, hidden]``; causal unidirectional GRU stack.
+
+    The GRU has unbounded memory (``receptive_field is None``); chunked
+    streaming carries the hidden state instead of a context window, and
+    equivalence with offline encoding holds at the decision level.
+    """
+
+    def __init__(self, input_size: int, hidden_size: int, layers: int, dropout: float):
+        super().__init__()
+        _check_dims(input_size, hidden_size, layers, dropout)
+        self.receptive_field = None
+        self.gru = nn.GRU(
+            input_size,
+            hidden_size,
+            num_layers=layers,
+            batch_first=True,
+            dropout=float(dropout) if layers > 1 else 0.0,
+        )
+
+    def forward(self, frames: torch.Tensor, hidden: torch.Tensor | None = None):
+        """Encode frames; returns (states [B, T, H], next hidden state)."""
+        if frames.ndim != 3:
+            raise ValidationError(
+                f"encoder expects [B, T, F] frames, got shape {tuple(frames.shape)}"
+            )
+        return self.gru(frames, hidden)
+
+
+def build_encoder(config, input_size: int) -> nn.Module:
+    """Build the encoder named by ``config.encoder`` ("tcn" or "gru").
+
+    The returned module maps ``[B, T, input_size]`` to ``[B, T, hidden]``;
+    for the GRU the joint model wraps the (states, hidden) pair.
+    """
+    from slotvox.config import TrainConfig
+
+    if not isinstance(config, TrainConfig):
+        raise ValidationError(f"config must be a TrainConfig, got {type(config).__name__}")
+    if config.encoder == "tcn":
+        return TCNEncoder(input_size, config.hidden_size, config.layers, config.dropout)
+    if config.encoder == "gru":
+        return GRUEncoder(input_size, config.hidden_size, config.layers, config.dropout)
+    raise ValidationError(f"unknown encoder {config.encoder!r}")
