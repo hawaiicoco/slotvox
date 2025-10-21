@@ -20,8 +20,8 @@ from slotvox.config.generation import SPLITS
 from slotvox.data.alignment import frame_tags, frame_token_map
 from slotvox.data.features_store import load_features, read_features_envelope
 from slotvox.data.persist import DATASET_DIR_SCHEMA_ID
-from slotvox.errors import SchemaError, ValidationError
-from slotvox.models.vocab import Vocab
+from slotvox.errors import SchemaError, SlotvoxError, ValidationError
+from slotvox.models.vocab import PAD_INDEX, Vocab
 from slotvox.schema.annotations import AnnotatedUtterance
 from slotvox.schema.serialize import read_json, read_jsonl
 from slotvox.synth.utterance import SyntheticUtterance
@@ -154,3 +154,82 @@ def _encode_row(
         intent_index=intent_index,
         frame_tag_names=names,
     )
+
+
+def _torch():
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover - exercised only without the extra
+        raise SlotvoxError(
+            "batching requires the torch extra: pip install 'slotvox[torch]' "
+            "(CPU wheels: --index-url https://download.pytorch.org/whl/cpu)"
+        ) from exc
+    return torch
+
+
+@dataclass(frozen=True)
+class FrameBatch:
+    """A padded batch of encoded examples (torch tensors)."""
+
+    mel: torch.Tensor  # [B, T, F] float32, zero-padded  # noqa: F821
+    mask: torch.Tensor  # [B, T] bool, True = real frame  # noqa: F821
+    intent: torch.Tensor  # [B] int64  # noqa: F821
+    tags: torch.Tensor  # [B, T] int64, PAD_INDEX where masked  # noqa: F821
+
+    @property
+    def size(self) -> int:
+        """Batch size B."""
+        return int(self.intent.shape[0])
+
+
+def collate(examples) -> FrameBatch:
+    """Pad a non-empty sequence of examples into one batch."""
+    if (
+        isinstance(examples, (str, bytes))
+        or not isinstance(examples, (list, tuple))
+        or not examples
+    ):
+        raise ValidationError("collate needs a non-empty list of EncodedExample")
+    for example in examples:
+        if not isinstance(example, EncodedExample):
+            raise ValidationError(
+                f"collate needs EncodedExample instances, got {type(example).__name__}"
+            )
+    width = max(example.n_frames for example in examples)
+    features = examples[0].mel.shape[1]
+    mel = np.zeros((len(examples), width, features), dtype=np.float32)
+    mask = np.zeros((len(examples), width), dtype=bool)
+    intent = np.zeros(len(examples), dtype=np.int64)
+    tags = np.full((len(examples), width), PAD_INDEX, dtype=np.int64)
+    for row, example in enumerate(examples):
+        if example.mel.shape[1] != features:
+            raise ValidationError(
+                f"examples disagree on feature width: {example.mel.shape[1]} vs {features}"
+            )
+        length = example.n_frames
+        mel[row, :length] = example.mel
+        mask[row, :length] = True
+        intent[row] = example.intent_index
+        tags[row, :length] = example.frame_tag_indices
+    torch = _torch()
+    return FrameBatch(
+        mel=torch.from_numpy(mel),
+        mask=torch.from_numpy(mask),
+        intent=torch.from_numpy(intent),
+        tags=torch.from_numpy(tags),
+    )
+
+
+def iterate_batches(examples, batch_size: int, *, rng=None):
+    """Yield batches; sequential when ``rng`` is None, shuffled when given."""
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        raise ValidationError(f"batch_size must be a positive int, got {batch_size!r}")
+    items = list(examples)
+    if not items:
+        raise ValidationError("iterate_batches needs at least one example")
+    if rng is not None and not isinstance(rng, np.random.Generator):
+        raise ValidationError("rng must be a numpy Generator (see make_rng) or None")
+    order = np.arange(len(items)) if rng is None else rng.permutation(len(items))
+    for start in range(0, len(items), batch_size):
+        chunk = [items[int(i)] for i in order[start : start + batch_size]]
+        yield collate(chunk)
