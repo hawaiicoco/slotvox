@@ -14,6 +14,7 @@ from slotvox.config.features import FeatureConfig
 from slotvox.errors import ValidationError
 from slotvox.features.frontend import log_mel_frames
 from slotvox.synth.utterance import SyntheticUtterance
+from slotvox.tagging.bio import format_tag, tags_to_spans
 
 NO_TOKEN = -1
 
@@ -53,3 +54,33 @@ def frame_tags(tags, token_map: np.ndarray) -> tuple[str, ...]:
     if token_map.size and (int(token_map.min()) < NO_TOKEN or int(token_map.max()) >= len(tags)):
         raise ValidationError(f"token_map values must be within [{NO_TOKEN}, {len(tags) - 1}]")
     return tuple("O" if token == NO_TOKEN else tags[int(token)] for token in token_map)
+
+
+def frame_span_tags(tags, token_map: np.ndarray) -> tuple[str, ...]:
+    """Lift token-level BIO tags to canonical frame-level BIO spans.
+
+    Each token span becomes exactly one frame span: ``B-<slot>`` on its
+    first covered frame, ``I-<slot>`` on every following frame up to the
+    last covered one — intra-span gap frames continue the span, so the
+    result is always structurally valid BIO. Frames outside spans are
+    ``O``; spans whose tokens no frame covers are dropped (a documented
+    boundary for tokens shorter than one frame).
+    """
+    if isinstance(tags, (str, bytes)) or not isinstance(tags, (list, tuple)):
+        raise ValidationError(f"tags must be a list/tuple, got {type(tags).__name__}")
+    if not all(isinstance(tag, str) for tag in tags):
+        raise ValidationError("tags must contain strings")
+    if not isinstance(token_map, np.ndarray) or token_map.dtype.kind != "i":
+        raise ValidationError("token_map must be an integer numpy array")
+    if token_map.size and (int(token_map.min()) < NO_TOKEN or int(token_map.max()) >= len(tags)):
+        raise ValidationError(f"token_map values must be within [{NO_TOKEN}, {len(tags) - 1}]")
+    out = ["O"] * int(token_map.shape[0])
+    for span in tags_to_spans(tuple(tags)):
+        covered = np.flatnonzero((token_map >= span.start) & (token_map < span.end))
+        if covered.size == 0:
+            continue
+        first, last = int(covered[0]), int(covered[-1])
+        out[first] = format_tag("B", span.label)
+        for frame in range(first + 1, last + 1):
+            out[frame] = format_tag("I", span.label)
+    return tuple(out)
