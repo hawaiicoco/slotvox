@@ -17,7 +17,7 @@ import numpy as np
 from slotvox.config import FeatureConfig
 from slotvox.config.base import config_from_dict
 from slotvox.config.generation import SPLITS
-from slotvox.data.alignment import frame_tags, frame_token_map
+from slotvox.data.alignment import frame_span_tags, frame_token_map
 from slotvox.data.features_store import load_features, read_features_envelope
 from slotvox.data.persist import DATASET_DIR_SCHEMA_ID
 from slotvox.errors import SchemaError, SlotvoxError, ValidationError
@@ -131,7 +131,7 @@ def _encode_row(
         np.zeros(n_samples, dtype=np.float32),
     )
     token_map = frame_token_map(utterance, feature_config)
-    names = frame_tags(annotation.tags, token_map)
+    names = frame_span_tags(annotation.tags, token_map)
     mel, stored_map = load_features(features_dir, annotation.utterance_id)
     if not np.array_equal(stored_map, token_map):
         raise SchemaError(
