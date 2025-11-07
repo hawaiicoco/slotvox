@@ -8,8 +8,12 @@ Semantics (all offline-comparable):
 - Committed frames are encoded from a bounded context window (the TCN
   receptive field) or a carried hidden state (GRU); greedy slot tags
   are emitted per committed frame and never change afterwards.
-- Latency accounting is in AUDIO time: milliseconds of pushed audio
-  when the first frame committed.
+- Intent hypotheses are partial: recomputed from accumulated frame
+  states, flagged stable once the softmax posterior reaches
+  ``stability_threshold``; a later different stable intent counts as a
+  revision (reported, never hidden).
+- Latency accounting is in AUDIO time: milliseconds pushed when the
+  first frame committed and when the first stable intent appeared.
 
 Requires the torch extra and a model in eval mode. NOT real speech:
 streams here are synthetic clips from the slotvox factory.
@@ -38,12 +42,27 @@ STREAM_STATE_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
+class IntentHypothesis:
+    """The current partial intent estimate."""
+
+    intent: str
+    posterior: float
+    stable: bool
+    frames_seen: int
+
+
+@dataclass(frozen=True)
 class StreamResult:
     """Final understanding of one streamed utterance."""
 
+    intent: str
+    posterior: float
+    stable: bool
     frame_tags: tuple[str, ...]
     audio_ms: float
     first_frame_latency_ms: float | None
+    first_stable_latency_ms: float | None
+    revisions: int
 
     @property
     def n_frames(self) -> int:
@@ -53,14 +72,19 @@ class StreamResult:
     def to_dict(self) -> dict[str, Any]:
         """JSON-native dict form."""
         return {
+            "intent": self.intent,
+            "posterior": self.posterior,
+            "stable": self.stable,
             "frame_tags": list(self.frame_tags),
             "audio_ms": self.audio_ms,
             "first_frame_latency_ms": self.first_frame_latency_ms,
+            "first_stable_latency_ms": self.first_stable_latency_ms,
+            "revisions": self.revisions,
         }
 
 
 class StreamSession:
-    """Bounded streaming session for one utterance."""
+    """Bounded, resumable streaming session for one utterance."""
 
     def __init__(
         self,
@@ -109,7 +133,13 @@ class StreamSession:
         self._frame_cursor = 0
         self._n_pushed = 0
         self._committed_tags: list[str] = []
+        self._state_sum = torch.zeros(model.spec.train_config.hidden_size)
+        self._state_count = 0
+        self._hypothesis: IntentHypothesis | None = None
+        self._stable_intent: str | None = None
+        self._revisions = 0
         self._first_frame_ms: float | None = None
+        self._first_stable_ms: float | None = None
         self._finished = False
 
     # -- introspection --------------------------------------------------
@@ -123,6 +153,11 @@ class StreamSession:
     def frames_committed(self) -> int:
         """Number of frames committed so far."""
         return self._frame_cursor
+
+    @property
+    def hypothesis(self) -> IntentHypothesis | None:
+        """Current partial intent hypothesis (None before the first frame)."""
+        return self._hypothesis
 
     @property
     def committed_tags(self) -> tuple[str, ...]:
@@ -146,14 +181,21 @@ class StreamSession:
             raise StreamingError("session already finalized")
         self._commit(final=True)
         self._finished = True
-        if self._frame_cursor == 0:
+        if self._state_count == 0:
             raise StreamingError(
                 "no frames committed; the stream was shorter than one analysis frame"
             )
+        hypothesis = self._hypothesis
+        assert hypothesis is not None  # guaranteed by state_count > 0
         return StreamResult(
+            intent=hypothesis.intent,
+            posterior=hypothesis.posterior,
+            stable=hypothesis.stable,
             frame_tags=tuple(self._committed_tags),
             audio_ms=self._n_pushed / self._rate * 1000.0,
             first_frame_latency_ms=self._first_frame_ms,
+            first_stable_latency_ms=self._first_stable_ms,
+            revisions=self._revisions,
         )
 
     # -- internals ------------------------------------------------------
@@ -185,6 +227,7 @@ class StreamSession:
         self._frame_cursor += count
         if self._first_frame_ms is None:
             self._first_frame_ms = self._n_pushed / self._rate * 1000.0
+        self._accumulate_intent(states)
         return count
 
     def _frame_mel(self, frames: np.ndarray) -> torch.Tensor:
@@ -206,3 +249,29 @@ class StreamSession:
             for row in mel:
                 self._mel_window.append(row.numpy().copy())
             return states[:, -mel.shape[0] :, :]
+
+    def _accumulate_intent(self, states: torch.Tensor) -> None:
+        with torch.no_grad():
+            self._state_sum = self._state_sum + states[0].sum(dim=0)
+            self._state_count += int(states.shape[1])
+            logits = self._model.intent_head.from_accumulated(
+                self._state_sum.unsqueeze(0),
+                torch.tensor([self._state_count]),
+            )[0]
+            posterior = torch.softmax(logits, dim=-1)
+            best = int(posterior.argmax())
+            confidence = float(posterior[best])
+            stable = confidence >= self._stream.stability_threshold
+            intent = self._model.spec.intents[best]
+            if stable:
+                if self._stable_intent is None:
+                    self._first_stable_ms = self._n_pushed / self._rate * 1000.0
+                elif self._stable_intent != intent:
+                    self._revisions += 1
+                self._stable_intent = intent
+            self._hypothesis = IntentHypothesis(
+                intent=intent,
+                posterior=confidence,
+                stable=stable,
+                frames_seen=self._state_count,
+            )
