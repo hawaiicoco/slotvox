@@ -275,3 +275,170 @@ class StreamSession:
                 stable=stable,
                 frames_seen=self._state_count,
             )
+
+    # -- resumable state --------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Versioned resumable snapshot (canonical-JSON-ready)."""
+        return {
+            "schema": STREAM_STATE_SCHEMA_ID,
+            "schema_version": STREAM_STATE_SCHEMA_VERSION,
+            "model_hash": self._model.spec.model_hash,
+            "feature_config": self._features.to_dict(),
+            "stream_config": self._stream.to_dict(),
+            "buffer": self._buffer.peek().tolist(),
+            "n_pushed": self._n_pushed,
+            "frame_cursor": self._frame_cursor,
+            "committed_tags": list(self._committed_tags),
+            "mel_window": [row.tolist() for row in self._mel_window],
+            "state_sum": self._state_sum.tolist(),
+            "state_count": self._state_count,
+            "hidden": None if self._hidden is None else self._hidden.tolist(),
+            "stable_intent": self._stable_intent,
+            "revisions": self._revisions,
+            "first_frame_ms": self._first_frame_ms,
+            "first_stable_ms": self._first_stable_ms,
+            "finished": self._finished,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any, model: JointIntentSlotModel) -> StreamSession:
+        """Rebuild a session from :meth:`to_dict` output (strict).
+
+        The ``model_hash`` guard rejects states produced by a different
+        model; counters, buffer, and window contents are validated before
+        anything is restored. The partial hypothesis is recomputed from
+        the restored accumulator, so a resumed session continues exactly
+        where the original stopped.
+        """
+        if not isinstance(data, dict):
+            raise StreamingError(f"stream state must be a dict, got {type(data).__name__}")
+        required = {
+            "schema",
+            "schema_version",
+            "model_hash",
+            "feature_config",
+            "stream_config",
+            "buffer",
+            "n_pushed",
+            "frame_cursor",
+            "committed_tags",
+            "mel_window",
+            "state_sum",
+            "state_count",
+            "hidden",
+            "stable_intent",
+            "revisions",
+            "first_frame_ms",
+            "first_stable_ms",
+            "finished",
+        }
+        unknown = sorted(set(data) - required)
+        missing = sorted(required - set(data))
+        if unknown:
+            raise StreamingError(f"stream state got unknown keys: {unknown}")
+        if missing:
+            raise StreamingError(f"stream state is missing keys: {missing}")
+        if data["schema"] != STREAM_STATE_SCHEMA_ID:
+            raise StreamingError(f"unknown stream state schema {data['schema']!r}")
+        if data["schema_version"] != STREAM_STATE_SCHEMA_VERSION:
+            raise StreamingError(f"unsupported stream state version {data['schema_version']!r}")
+        if not isinstance(model, JointIntentSlotModel):
+            raise StreamingError(
+                f"model must be a JointIntentSlotModel, got {type(model).__name__}"
+            )
+        if data["model_hash"] != model.spec.model_hash:
+            raise StreamingError("stream state was produced by a different model")
+        features = FeatureConfig.from_dict(data["feature_config"])
+        stream = StreamConfig.from_dict(data["stream_config"])
+        session = cls(model, features, stream)
+        frame_cursor = data["frame_cursor"]
+        n_pushed = data["n_pushed"]
+        state_count = data["state_count"]
+        committed = data["committed_tags"]
+        for name, value in (
+            ("frame_cursor", frame_cursor),
+            ("n_pushed", n_pushed),
+            ("state_count", state_count),
+            ("revisions", data["revisions"]),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise StreamingError(f"stream state {name} must be a non-negative int")
+        if not isinstance(committed, list) or not all(isinstance(tag, str) for tag in committed):
+            raise StreamingError("stream state committed_tags must be a list of strings")
+        if len(committed) != frame_cursor or state_count != frame_cursor:
+            raise StreamingError("stream state counters disagree with committed tags")
+        if n_pushed < frame_cursor * session._hop:
+            raise StreamingError("stream state n_pushed is behind the frame cursor")
+        buffer = np.asarray(data["buffer"], dtype=np.float32)
+        if buffer.ndim != 1 or buffer.size > session._buffer.capacity:
+            raise StreamingError("stream state buffer is malformed or over capacity")
+        if buffer.size:
+            session._buffer.append(buffer)
+        rows = data["mel_window"]
+        if not isinstance(rows, list) or not all(
+            isinstance(row, list) and len(row) == features.n_mels for row in rows
+        ):
+            raise StreamingError(
+                f"stream state mel_window must be a list of {features.n_mels}-bin rows"
+            )
+        session._mel_window.extend(np.asarray(row, dtype=np.float32) for row in rows)
+        hidden = data["hidden"]
+        if hidden is not None:
+            try:
+                tensor = torch.tensor(hidden, dtype=torch.float32)
+            except (RuntimeError, TypeError, ValueError) as exc:
+                raise StreamingError("stream state hidden is malformed") from exc
+            if not bool(torch.isfinite(tensor).all()):
+                raise StreamingError("stream state hidden contains non-finite values")
+            session._hidden = tensor
+        state_sum = np.asarray(data["state_sum"], dtype=np.float64)
+        hidden_size = model.spec.train_config.hidden_size
+        if state_sum.shape != (hidden_size,) or not bool(np.isfinite(state_sum).all()):
+            raise StreamingError(
+                "stream state state_sum must be a finite vector of hidden_size values"
+            )
+        session._frame_cursor = frame_cursor
+        session._n_pushed = n_pushed
+        session._committed_tags = list(committed)
+        session._state_sum = torch.tensor(state_sum, dtype=torch.float32)
+        session._state_count = state_count
+        stable_intent = data["stable_intent"]
+        if stable_intent is not None and stable_intent not in model.spec.intents:
+            raise StreamingError(f"unknown stable intent {stable_intent!r} in stream state")
+        session._stable_intent = stable_intent
+        session._revisions = data["revisions"]
+        for name in ("first_frame_ms", "first_stable_ms"):
+            value = data[name]
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not np.isfinite(value)
+                or value < 0
+            ):
+                raise StreamingError(f"stream state {name} must be None or a non-negative number")
+        session._first_frame_ms = (
+            None if data["first_frame_ms"] is None else float(data["first_frame_ms"])
+        )
+        session._first_stable_ms = (
+            None if data["first_stable_ms"] is None else float(data["first_stable_ms"])
+        )
+        if not isinstance(data["finished"], bool):
+            raise StreamingError("stream state finished must be a bool")
+        session._finished = data["finished"]
+        if session._state_count:
+            with torch.no_grad():
+                logits = model.intent_head.from_accumulated(
+                    session._state_sum.unsqueeze(0),
+                    torch.tensor([session._state_count]),
+                )[0]
+                posterior = torch.softmax(logits, dim=-1)
+                best = int(posterior.argmax())
+                confidence = float(posterior[best])
+                session._hypothesis = IntentHypothesis(
+                    intent=model.spec.intents[best],
+                    posterior=confidence,
+                    stable=confidence >= stream.stability_threshold,
+                    frames_seen=state_count,
+                )
+        return session
