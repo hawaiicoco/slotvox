@@ -21,7 +21,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from slotvox.errors import ValidationError
+from slotvox.schema.annotations import LANGUAGES
 from slotvox.schema.naming import validate_id
+from slotvox.util.jsoncanon import stable_hash
 
 INSTRUCTION_SCHEMA_ID = "slotvox.instruction-sample"
 INSTRUCTION_SCHEMA_VERSION = 1
@@ -139,3 +141,114 @@ class Turn:
             text=data["text"],
             audio=None if audio is None else AudioRef.from_dict(audio),
         )
+
+
+@dataclass(frozen=True)
+class InstructionSample:
+    """A complete interleaved speech-text instruction sample.
+
+    Structure rules (all enforced): an optional single leading ``system``
+    turn, then strict ``user``/``assistant`` alternation ending on the
+    assistant, and at least one user turn carrying audio — a sample
+    without speech is not a speech-instruction sample.
+    """
+
+    sample_id: str
+    domain: str
+    language: str
+    intent: str
+    turns: tuple[Turn, ...]
+    tags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_id(self.sample_id, "InstructionSample.sample_id")
+        validate_id(self.domain, "InstructionSample.domain")
+        validate_id(self.intent, "InstructionSample.intent")
+        if self.language not in LANGUAGES:
+            raise ValidationError(f"language must be one of {LANGUAGES}, got {self.language!r}")
+        turns = self.turns
+        if isinstance(turns, list):
+            turns = tuple(turns)
+            object.__setattr__(self, "turns", turns)
+        if not isinstance(turns, tuple) or not all(isinstance(turn, Turn) for turn in turns):
+            raise ValidationError("turns must be a tuple/list of Turn")
+        roles = [turn.role for turn in turns]
+        body = roles[1:] if roles and roles[0] == "system" else roles
+        if roles and roles[0] == "system" and "system" in body:
+            raise ValidationError("at most one system turn is allowed, and it must be first")
+        if len(body) < 2 or len(body) % 2 != 0:
+            raise ValidationError(
+                "turns must alternate user/assistant in pairs after the optional system turn"
+            )
+        for position, role in enumerate(body):
+            expected = "user" if position % 2 == 0 else "assistant"
+            if role != expected:
+                raise ValidationError(
+                    f"turn {position} of the body must be {expected!r}, got {role!r}"
+                )
+        if not any(turn.audio is not None for turn in turns):
+            raise ValidationError("an instruction sample needs at least one audio turn")
+        tags = self.tags
+        if isinstance(tags, list):
+            tags = tuple(tags)
+            object.__setattr__(self, "tags", tags)
+        if not isinstance(tags, tuple):
+            raise ValidationError("tags must be a tuple/list of ids")
+        for tag in tags:
+            validate_id(tag, "InstructionSample tag")
+        if len(set(tags)) != len(tags):
+            raise ValidationError("tags must be unique")
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-native dict under the instruction-sample envelope."""
+        return {
+            "schema": INSTRUCTION_SCHEMA_ID,
+            "schema_version": INSTRUCTION_SCHEMA_VERSION,
+            "sample_id": self.sample_id,
+            "domain": self.domain,
+            "language": self.language,
+            "intent": self.intent,
+            "turns": [turn.to_dict() for turn in self.turns],
+            "tags": list(self.tags),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> InstructionSample:
+        """Reconstruct from :meth:`to_dict` output (strict)."""
+        _exact_keys(
+            data,
+            {
+                "schema",
+                "schema_version",
+                "sample_id",
+                "domain",
+                "language",
+                "intent",
+                "turns",
+                "tags",
+            },
+            "instruction sample",
+        )
+        if data["schema"] != INSTRUCTION_SCHEMA_ID:
+            raise ValidationError(f"unknown instruction schema {data['schema']!r}")
+        if data["schema_version"] != INSTRUCTION_SCHEMA_VERSION:
+            raise ValidationError(
+                f"unsupported instruction schema version {data['schema_version']!r}"
+            )
+        if not isinstance(data["turns"], list):
+            raise ValidationError("instruction sample 'turns' must be a list")
+        if not isinstance(data["tags"], list):
+            raise ValidationError("instruction sample 'tags' must be a list")
+        return cls(
+            sample_id=data["sample_id"],
+            domain=data["domain"],
+            language=data["language"],
+            intent=data["intent"],
+            turns=tuple(Turn.from_dict(turn) for turn in data["turns"]),
+            tags=tuple(data["tags"]),
+        )
+
+    @property
+    def sample_hash(self) -> str:
+        """Provenance hash of the full serialized sample."""
+        return stable_hash(self.to_dict())
