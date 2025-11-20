@@ -91,3 +91,51 @@ class AudioRef:
             dataset_hash=data["dataset_hash"],
             duration_ms=data["duration_ms"],
         )
+
+
+@dataclass(frozen=True)
+class Turn:
+    """One conversation turn: text, audio (user turns only), or both.
+
+    Audio is restricted to user turns by construction: the task shape is
+    speech in (user) and structured text out (assistant), with an
+    optional text-only system prompt.
+    """
+
+    role: str
+    text: str | None = None
+    audio: AudioRef | None = None
+
+    def __post_init__(self) -> None:
+        if self.role not in TURN_ROLES:
+            raise ValidationError(f"role must be one of {TURN_ROLES}, got {self.role!r}")
+        if self.text is not None and (not isinstance(self.text, str) or not self.text.strip()):
+            raise ValidationError("turn text must be a non-blank string or None")
+        if self.audio is not None:
+            if not isinstance(self.audio, AudioRef):
+                raise ValidationError(
+                    f"audio must be an AudioRef or None, got {type(self.audio).__name__}"
+                )
+            if self.role != "user":
+                raise ValidationError("only user turns may carry audio")
+        if self.text is None and self.audio is None:
+            raise ValidationError("a turn needs text, audio, or both")
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-native dict form."""
+        return {
+            "role": self.role,
+            "text": self.text,
+            "audio": None if self.audio is None else self.audio.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Turn:
+        """Reconstruct from :meth:`to_dict` output (strict)."""
+        _exact_keys(data, {"role", "text", "audio"}, "turn")
+        audio = data["audio"]
+        return cls(
+            role=data["role"],
+            text=data["text"],
+            audio=None if audio is None else AudioRef.from_dict(audio),
+        )
