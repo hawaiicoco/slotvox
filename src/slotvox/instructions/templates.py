@@ -13,8 +13,16 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from slotvox.data.factory import GeneratedExample
 from slotvox.errors import ValidationError
-from slotvox.instructions.schema import TURN_ROLES, Turn
+from slotvox.instructions.schema import (
+    TURN_ROLES,
+    AudioRef,
+    InstructionSample,
+    Turn,
+    check_provenance_hash,
+)
+from slotvox.schema.builtins import builtin_domain
 from slotvox.schema.naming import validate_id
 
 PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]*)\}")
@@ -118,3 +126,43 @@ def slots_text(slot_values: Mapping[str, tuple[str, ...]], slot_names: Sequence[
                 raise ValidationError(f"slot {slot!r} value {value!r} must not contain braces")
         parts.append(f"{slot}={'/'.join(values)}")
     return ", ".join(parts)
+
+
+def render_sample(
+    example: GeneratedExample, *, domain: str, dataset_hash: str
+) -> InstructionSample:
+    """Render one generated example into an instruction sample.
+
+    The user turn references the utterance audio by manifest id
+    (``<domain>-<utterance_id>``); the assistant turn is the canonical
+    structured answer built from the by-construction annotation. The
+    transcript is deliberately NOT included — the task is speech to
+    structure, and leaking text would make the audio channel optional.
+    """
+    if not isinstance(example, GeneratedExample):
+        raise ValidationError(f"example must be a GeneratedExample, got {type(example).__name__}")
+    spec = builtin_domain(domain)  # strict: unknown domains rejected
+    check_provenance_hash(dataset_hash, "dataset_hash")
+    language = example.annotation.language
+    slots = slots_text(example.slot_values, spec.slot_names)
+    if not slots:
+        slots = EMPTY_SLOTS[language]
+    manifest_id = f"{domain}-{example.utterance_id}"
+    audio = AudioRef(
+        manifest_id=manifest_id,
+        dataset_hash=dataset_hash,
+        duration_ms=example.utterance.n_samples / example.utterance.sample_rate * 1000.0,
+    )
+    turns = (
+        SYSTEM_TEMPLATES[language].render({"domain": domain}),
+        Turn(role="user", audio=audio),
+        ASSISTANT_TEMPLATES[language].render({"intent": example.annotation.intent, "slots": slots}),
+    )
+    return InstructionSample(
+        sample_id=manifest_id,
+        domain=domain,
+        language=language,
+        intent=example.annotation.intent,
+        turns=turns,
+        tags=("synthetic",),
+    )
