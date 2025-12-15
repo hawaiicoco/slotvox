@@ -8,7 +8,8 @@ Layout (schema ``slotvox.instruction-export``, version 1)::
 
 No audio bytes are stored — rows reference manifest ids that consumers
 resolve against a dataset or feature store. The manifest is written last
-and acts as the commit point.
+and acts as the commit point; loading re-checks the row count and corpus
+hash, so tampered or truncated exports are rejected before parsing.
 """
 
 from __future__ import annotations
@@ -17,11 +18,16 @@ import math
 from collections.abc import Mapping
 from pathlib import Path
 
-from slotvox.errors import ValidationError
+from slotvox.errors import SchemaError, ValidationError
 from slotvox.instructions.quality import QualityThresholds, check_samples
 from slotvox.instructions.schema import InstructionSample
 from slotvox.schema.naming import validate_id
-from slotvox.schema.serialize import write_json_atomic, write_jsonl
+from slotvox.schema.serialize import (
+    read_json,
+    read_jsonl,
+    write_json_atomic,
+    write_jsonl,
+)
 from slotvox.util.jsoncanon import stable_hash
 
 EXPORT_SCHEMA_ID = "slotvox.instruction-export"
@@ -99,3 +105,52 @@ def export_instructions(
     }
     write_json_atomic(root / "manifest.json", manifest)
     return root
+
+
+_MANIFEST_KEYS = frozenset(
+    {
+        "schema",
+        "schema_version",
+        "sample_count",
+        "languages",
+        "domains",
+        "intents",
+        "total_duration_ms",
+        "dataset_hashes",
+        "mixing_weights",
+        "quality",
+        "content_hash",
+    }
+)
+
+
+def read_export_manifest(in_dir: str | Path) -> dict:
+    """Read and validate the export manifest envelope (strict)."""
+    manifest = read_json(Path(in_dir) / "manifest.json")
+    if not isinstance(manifest, dict):
+        raise SchemaError("manifest.json must contain a JSON object")
+    unknown = sorted(set(manifest) - _MANIFEST_KEYS)
+    missing = sorted(_MANIFEST_KEYS - set(manifest))
+    if unknown:
+        raise SchemaError(f"export manifest got unknown keys: {unknown}")
+    if missing:
+        raise SchemaError(f"export manifest is missing keys: {missing}")
+    if manifest["schema"] != EXPORT_SCHEMA_ID:
+        raise SchemaError(f"unknown export schema {manifest['schema']!r}")
+    if manifest["schema_version"] != EXPORT_SCHEMA_VERSION:
+        raise SchemaError(f"unsupported export schema version {manifest['schema_version']!r}")
+    return manifest
+
+
+def load_instructions(in_dir: str | Path) -> tuple[InstructionSample, ...]:
+    """Load an exported corpus, rejecting truncation and tampering."""
+    manifest = read_export_manifest(in_dir)
+    rows = read_jsonl(Path(in_dir) / "instructions.jsonl")
+    if len(rows) != manifest["sample_count"]:
+        raise SchemaError(
+            f"instruction row count {len(rows)} does not match manifest "
+            f"sample_count {manifest['sample_count']}"
+        )
+    if stable_hash(rows) != manifest["content_hash"]:
+        raise SchemaError("instructions are corrupt or tampered: content hash mismatch")
+    return tuple(InstructionSample.from_dict(row) for row in rows)
