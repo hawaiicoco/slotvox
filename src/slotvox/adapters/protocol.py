@@ -105,3 +105,94 @@ class InferRequest:
             samples=tuple(data["samples"]),
             sample_rate=data["sample_rate"],
         )
+
+
+RESPONSE_SCHEMA_ID = "slotvox.infer-response"
+RESPONSE_SCHEMA_VERSION = 1
+
+
+@dataclass(frozen=True)
+class InferResponse:
+    """The greedy joint decision for one request.
+
+    ``frame_tags`` must be a structurally valid BIO sequence (the same
+    algebra the tagging package enforces), ``posterior`` is the intent
+    confidence in [0, 1], and ``model_hash`` pins which model produced
+    the decision.
+    """
+
+    request_id: str
+    intent: str
+    posterior: float
+    frame_tags: tuple[str, ...]
+    model_hash: str
+
+    def __post_init__(self) -> None:
+        from slotvox.instructions.schema import check_provenance_hash
+        from slotvox.tagging.bio import validate_sequence
+
+        _check_request_id(self.request_id)
+        if (
+            not isinstance(self.intent, str)
+            or not self.intent
+            or any(ch.isspace() for ch in self.intent)
+        ):
+            raise ValidationError("intent must be a non-empty string without whitespace")
+        if isinstance(self.posterior, bool) or not isinstance(self.posterior, (int, float)):
+            raise ValidationError(f"posterior must be a number, got {self.posterior!r}")
+        posterior = float(self.posterior)
+        if not 0.0 <= posterior <= 1.0:
+            raise ValidationError(f"posterior must be within [0, 1], got {self.posterior!r}")
+        object.__setattr__(self, "posterior", posterior)
+        frame_tags = self.frame_tags
+        if isinstance(frame_tags, list):
+            frame_tags = tuple(frame_tags)
+            object.__setattr__(self, "frame_tags", frame_tags)
+        if isinstance(frame_tags, (str, bytes)) or not isinstance(frame_tags, tuple):
+            raise ValidationError("frame_tags must be a tuple/list of BIO tags")
+        if not frame_tags:
+            raise ValidationError("frame_tags must be non-empty")
+        validate_sequence(frame_tags)  # strict BIO structure, both directions
+        check_provenance_hash(self.model_hash, "model_hash")
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-native dict under the response envelope."""
+        return {
+            "schema": RESPONSE_SCHEMA_ID,
+            "schema_version": RESPONSE_SCHEMA_VERSION,
+            "request_id": self.request_id,
+            "intent": self.intent,
+            "posterior": self.posterior,
+            "frame_tags": list(self.frame_tags),
+            "model_hash": self.model_hash,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> InferResponse:
+        """Reconstruct from :meth:`to_dict` output (strict)."""
+        _exact_keys(
+            data,
+            {
+                "schema",
+                "schema_version",
+                "request_id",
+                "intent",
+                "posterior",
+                "frame_tags",
+                "model_hash",
+            },
+            "infer response",
+        )
+        if data["schema"] != RESPONSE_SCHEMA_ID:
+            raise ValidationError(f"unknown response schema {data['schema']!r}")
+        if data["schema_version"] != RESPONSE_SCHEMA_VERSION:
+            raise ValidationError(f"unsupported response schema version {data['schema_version']!r}")
+        if not isinstance(data["frame_tags"], list):
+            raise ValidationError("response 'frame_tags' must be a list")
+        return cls(
+            request_id=data["request_id"],
+            intent=data["intent"],
+            posterior=data["posterior"],
+            frame_tags=tuple(data["frame_tags"]),
+            model_hash=data["model_hash"],
+        )
