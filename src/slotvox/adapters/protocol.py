@@ -196,3 +196,50 @@ class InferResponse:
             frame_tags=tuple(data["frame_tags"]),
             model_hash=data["model_hash"],
         )
+
+
+def request_schema() -> dict[str, Any]:
+    """JSON-schema subset describing request payloads (validator cross-checked)."""
+    return {
+        "type": "object",
+        "required": ["schema", "schema_version", "request_id", "samples", "sample_rate"],
+        "additionalProperties": False,
+        "properties": {
+            "schema": {"type": "string", "enum": [REQUEST_SCHEMA_ID]},
+            "schema_version": {"type": "integer", "enum": [REQUEST_SCHEMA_VERSION]},
+            "request_id": {"type": "string", "minLength": 1},
+            "samples": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 1,
+                "maxItems": MAX_REQUEST_SAMPLES,
+            },
+            "sample_rate": {"type": "integer", "enum": list(SUPPORTED_SAMPLE_RATES)},
+        },
+    }
+
+
+def response_schema() -> dict[str, Any]:
+    """JSON-schema subset describing response payloads (validator cross-checked)."""
+    return {
+        "type": "object",
+        "required": [
+            "schema",
+            "schema_version",
+            "request_id",
+            "intent",
+            "posterior",
+            "frame_tags",
+            "model_hash",
+        ],
+        "additionalProperties": False,
+        "properties": {
+            "schema": {"type": "string", "enum": [RESPONSE_SCHEMA_ID]},
+            "schema_version": {"type": "integer", "enum": [RESPONSE_SCHEMA_VERSION]},
+            "request_id": {"type": "string", "minLength": 1},
+            "intent": {"type": "string", "minLength": 1},
+            "posterior": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "frame_tags": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "model_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        },
+    }
