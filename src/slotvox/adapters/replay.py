@@ -100,3 +100,35 @@ def _require_fixtures(fixtures) -> list[Fixture]:
         if not isinstance(fixture, Fixture):
             raise AdapterError(f"fixtures must contain Fixture, got {type(fixture).__name__}")
     return list(fixtures)
+
+
+class ReplayAdapter:
+    """Serves validated canned responses keyed by ``request_id``."""
+
+    kind = "replay"
+
+    def __init__(self, fixtures):
+        items = _require_fixtures(fixtures)
+        self._by_id: dict[str, Fixture] = {}
+        for fixture in items:
+            key = fixture.request.request_id
+            if key in self._by_id:
+                raise AdapterError(f"duplicate fixture request_id {key!r}")
+            self._by_id[key] = fixture
+
+    @property
+    def request_ids(self) -> tuple[str, ...]:
+        """All served request ids, sorted."""
+        return tuple(sorted(self._by_id))
+
+    def __len__(self) -> int:
+        return len(self._by_id)
+
+    def infer(self, request: InferRequest) -> InferResponse:
+        """Return the fixture response for ``request`` (strict both ways)."""
+        if not isinstance(request, InferRequest):
+            raise AdapterError(f"request must be an InferRequest, got {type(request).__name__}")
+        fixture = self._by_id.get(request.request_id)
+        if fixture is None:
+            raise AdapterError(f"no fixture for request_id {request.request_id!r}")
+        return fixture.response
