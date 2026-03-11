@@ -8,6 +8,7 @@ GOLDEN_ALL = [
     "Fixture",
     "InferRequest",
     "InferResponse",
+    "JointAdapter",
     "LocalHttpAdapter",
     "MAX_REQUEST_SAMPLES",
     "MockInferServer",
@@ -31,6 +32,8 @@ GOLDEN_ALL = [
 def test_api_surface_is_pinned():
     assert sorted(adapters.__all__) == GOLDEN_ALL
     for name in GOLDEN_ALL:
+        if name == "JointAdapter":
+            continue  # torch extra; resolved in test_adapters_model
         assert hasattr(adapters, name)
 
 
