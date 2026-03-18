@@ -79,20 +79,53 @@ def _check_spans(spans, name: str) -> tuple[Span, ...]:
     return tuple(checked)
 
 
-def span_f1(gold_spans, pred_spans) -> SlotScore:
-    """Strict span matching: label and both boundaries must be equal.
+def check_policy(policy: str) -> str:
+    """Validate a slot boundary policy name."""
+    if policy not in SLOT_POLICIES:
+        raise ValidationError(f"policy must be one of {SLOT_POLICIES}, got {policy!r}")
+    return policy
 
-    Matching is multiplicity-aware: two identical gold spans need two
-    identical predicted spans for full credit.
+
+def span_f1(gold_spans, pred_spans, policy: str = "strict") -> SlotScore:
+    """Score predicted spans against gold under a documented policy.
+
+    ``strict`` requires the label and both boundaries to match exactly
+    (multiplicity-aware). ``partial`` awards Jaccard credit
+    (overlap / union) to same-label spans that overlap, assigned greedily
+    best-credit-first with positional tie-breaks, so results are
+    deterministic.
     """
+    check_policy(policy)
     gold = _check_spans(gold_spans, "gold_spans")
     pred = _check_spans(pred_spans, "pred_spans")
-    remaining = list(pred)
+    if policy == "strict":
+        remaining = list(pred)
+        credit = 0.0
+        for span in gold:
+            for index, candidate in enumerate(remaining):
+                if candidate == span:
+                    credit += 1.0
+                    remaining.pop(index)
+                    break
+        return SlotScore(gold_count=len(gold), pred_count=len(pred), credit=credit)
+    pairs = []
+    for gold_index, gold_span in enumerate(gold):
+        for pred_index, pred_span in enumerate(pred):
+            if gold_span.label != pred_span.label:
+                continue
+            overlap = min(gold_span.end, pred_span.end) - max(gold_span.start, pred_span.start)
+            if overlap <= 0:
+                continue
+            union = max(gold_span.end, pred_span.end) - min(gold_span.start, pred_span.start)
+            pairs.append((-overlap / union, gold_index, pred_index))
+    pairs.sort()
+    used_gold: set[int] = set()
+    used_pred: set[int] = set()
     credit = 0.0
-    for span in gold:
-        for index, candidate in enumerate(remaining):
-            if candidate == span:
-                credit += 1.0
-                remaining.pop(index)
-                break
+    for negated, gold_index, pred_index in pairs:
+        if gold_index in used_gold or pred_index in used_pred:
+            continue
+        used_gold.add(gold_index)
+        used_pred.add(pred_index)
+        credit += -negated
     return SlotScore(gold_count=len(gold), pred_count=len(pred), credit=credit)
