@@ -13,9 +13,11 @@ empty sides agree perfectly with F1 1.0.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from slotvox.errors import ValidationError
+from slotvox.schema.naming import validate_id
 from slotvox.tagging.bio import Span, tags_to_spans
 
 SLOT_POLICIES = ("strict", "partial")
@@ -190,3 +192,123 @@ def slot_f1(gold_tags, pred_tags, policy: str = "strict") -> SlotScore:
             f"gold and pred tag sequences must align ({len(gold_seq)} vs {len(pred_seq)})"
         )
     return span_f1(tags_to_spans(gold_seq), tags_to_spans(pred_seq), policy)
+
+
+def slice_pairs(mapping) -> tuple[tuple[str, str], ...]:
+    """Canonicalize a slice mapping into sorted ``(kind, value)`` pairs."""
+    if not isinstance(mapping, Mapping):
+        raise ValidationError(f"slices must be a mapping, got {type(mapping).__name__}")
+    pairs = []
+    for kind, value in mapping.items():
+        validate_id(kind, "slice kind")
+        if not isinstance(value, str) or not value:
+            raise ValidationError(f"slice value for {kind!r} must be a non-empty string")
+        pairs.append((kind, value))
+    return tuple(sorted(pairs))
+
+
+@dataclass(frozen=True)
+class TurnRecord:
+    """One evaluated turn: intents, tag sequences, and slice metadata."""
+
+    gold_intent: str
+    pred_intent: str
+    gold_tags: tuple[str, ...]
+    pred_tags: tuple[str, ...]
+    slices: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("gold_intent", "pred_intent"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value or any(ch.isspace() for ch in value):
+                raise ValidationError(f"{name} must be a non-empty string without whitespace")
+        for name in ("gold_tags", "pred_tags"):
+            tags = getattr(self, name)
+            if isinstance(tags, list):
+                tags = tuple(tags)
+                object.__setattr__(self, name, tags)
+            _check_labels(tags, name)
+        slices = self.slices
+        if isinstance(slices, Mapping):
+            slices = slice_pairs(slices)
+        if isinstance(slices, list):
+            slices = tuple(slices)
+        if not isinstance(slices, tuple):
+            raise ValidationError("slices must be a mapping or tuple/list of pairs")
+        kinds = []
+        normalized = []
+        for pair in slices:
+            if not isinstance(pair, tuple) or len(pair) != 2:
+                raise ValidationError(f"slice entries must be (kind, value) pairs, got {pair!r}")
+            kind, value = pair
+            validate_id(kind, "slice kind")
+            if not isinstance(value, str) or not value:
+                raise ValidationError(f"slice value for {kind!r} must be a non-empty string")
+            if kind in kinds:
+                raise ValidationError(f"duplicate slice kind {kind!r}")
+            kinds.append(kind)
+            normalized.append((kind, value))
+        object.__setattr__(self, "slices", tuple(sorted(normalized)))
+
+    @property
+    def slice_mapping(self) -> dict[str, str]:
+        """Slices as a plain dict."""
+        return dict(self.slices)
+
+
+@dataclass(frozen=True)
+class TurnScore:
+    """Joint turn totals (intent AND slots strictly right)."""
+
+    correct: int
+    total: int
+
+    def __post_init__(self) -> None:
+        for name in ("correct", "total"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValidationError(f"{name} must be a non-negative int, got {value!r}")
+        if self.correct > self.total:
+            raise ValidationError(f"correct {self.correct} exceeds total {self.total}")
+
+    @property
+    def accuracy(self) -> float:
+        """correct / total (0.0 for an empty total)."""
+        return self.correct / self.total if self.total else 0.0
+
+
+def _require_records(records) -> list[TurnRecord]:
+    if isinstance(records, (str, bytes)) or not isinstance(records, (list, tuple)) or not records:
+        raise ValidationError("records must be a non-empty list/tuple of TurnRecord")
+    for record in records:
+        if not isinstance(record, TurnRecord):
+            raise ValidationError(f"records must contain TurnRecord, got {type(record).__name__}")
+    return list(records)
+
+
+def turn_accuracy(records) -> TurnScore:
+    """Joint accuracy: a turn counts only when the intent is right AND the
+    strict span sets are equal (the documented turn-level policy)."""
+    items = _require_records(records)
+    correct = 0
+    for record in items:
+        if record.gold_intent != record.pred_intent:
+            continue
+        if tags_to_spans(record.gold_tags) == tags_to_spans(record.pred_tags):
+            correct += 1
+    return TurnScore(correct=correct, total=len(items))
+
+
+def micro_slot_f1(records, policy: str = "strict") -> SlotScore:
+    """Pool span credit over all records (micro averaging)."""
+    check_policy(policy)
+    items = _require_records(records)
+    gold_total = 0
+    pred_total = 0
+    credit_total = 0.0
+    for record in items:
+        score = slot_f1(record.gold_tags, record.pred_tags, policy)
+        gold_total += score.gold_count
+        pred_total += score.pred_count
+        credit_total += score.credit
+    return SlotScore(gold_count=gold_total, pred_count=pred_total, credit=credit_total)
