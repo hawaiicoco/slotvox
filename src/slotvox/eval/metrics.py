@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from slotvox.errors import ValidationError
-from slotvox.tagging.bio import Span
+from slotvox.tagging.bio import Span, tags_to_spans
 
 SLOT_POLICIES = ("strict", "partial")
 
@@ -129,3 +129,64 @@ def span_f1(gold_spans, pred_spans, policy: str = "strict") -> SlotScore:
         used_pred.add(pred_index)
         credit += -negated
     return SlotScore(gold_count=len(gold), pred_count=len(pred), credit=credit)
+
+
+@dataclass(frozen=True)
+class IntentScore:
+    """Intent-classification totals."""
+
+    correct: int
+    total: int
+
+    def __post_init__(self) -> None:
+        for name in ("correct", "total"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValidationError(f"{name} must be a non-negative int, got {value!r}")
+        if self.correct > self.total:
+            raise ValidationError(f"correct {self.correct} exceeds total {self.total}")
+
+    @property
+    def accuracy(self) -> float:
+        """correct / total (0.0 for an empty total)."""
+        return self.correct / self.total if self.total else 0.0
+
+
+def _check_labels(sequence, name: str) -> tuple[str, ...]:
+    if isinstance(sequence, (str, bytes)) or not isinstance(sequence, (list, tuple)):
+        raise ValidationError(f"{name} must be a list/tuple, got {type(sequence).__name__}")
+    for item in sequence:
+        if not isinstance(item, str) or not item:
+            raise ValidationError(f"{name} must contain non-empty strings, got {item!r}")
+    return tuple(sequence)
+
+
+def intent_accuracy(gold, pred) -> IntentScore:
+    """Intent accuracy over aligned gold/pred label sequences."""
+    gold_labels = _check_labels(gold, "gold")
+    pred_labels = _check_labels(pred, "pred")
+    if len(gold_labels) != len(pred_labels):
+        raise ValidationError(
+            f"gold and pred must align ({len(gold_labels)} vs {len(pred_labels)})"
+        )
+    if not gold_labels:
+        raise ValidationError("intent_accuracy needs at least one pair")
+    correct = sum(1 for left, right in zip(gold_labels, pred_labels, strict=True) if left == right)
+    return IntentScore(correct=correct, total=len(gold_labels))
+
+
+def slot_f1(gold_tags, pred_tags, policy: str = "strict") -> SlotScore:
+    """Sequence-level slot scoring: BIO tag sequences -> spans -> :func:`span_f1`.
+
+    Works for token-level and frame-level tags alike (both are BIO
+    sequences). Structurally invalid sequences raise ``TaggingError``;
+    repair them first if the evaluation policy tolerates raw model output.
+    """
+    check_policy(policy)
+    gold_seq = _check_labels(gold_tags, "gold_tags")
+    pred_seq = _check_labels(pred_tags, "pred_tags")
+    if len(gold_seq) != len(pred_seq):
+        raise ValidationError(
+            f"gold and pred tag sequences must align ({len(gold_seq)} vs {len(pred_seq)})"
+        )
+    return span_f1(tags_to_spans(gold_seq), tags_to_spans(pred_seq), policy)
