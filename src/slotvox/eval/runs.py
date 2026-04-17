@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from slotvox.errors import ValidationError
+from slotvox.errors import SchemaError, ValidationError
 from slotvox.eval.bootstrap import BootstrapCI, paired_bootstrap_ci
 from slotvox.eval.confusion import ConfusionMatrix
 from slotvox.eval.metrics import (
@@ -95,6 +95,28 @@ class ScoredRun:
         """Number of evaluated turns."""
         return len(self.records)
 
+    def to_dict(self) -> dict[str, Any]:
+        """The serialized report envelope (records themselves excluded)."""
+        return {
+            "schema": RUN_SCHEMA_ID,
+            "schema_version": RUN_SCHEMA_VERSION,
+            "run_id": self.run_id,
+            "record_count": self.record_count,
+            "intent": {"correct": self.intent.correct, "total": self.intent.total},
+            "slot_strict": _slot_dict(self.slot_strict),
+            "slot_partial": _slot_dict(self.slot_partial),
+            "turn": {"correct": self.turn.correct, "total": self.turn.total},
+            "confusion": self.confusion.to_dict(),
+            "slices": self.slices,
+            "metadata": self.metadata,
+            "bootstrap": None if self.bootstrap is None else self.bootstrap.to_dict(),
+        }
+
+    @property
+    def run_hash(self) -> str:
+        """Provenance hash of the envelope."""
+        return stable_hash(self.to_dict())
+
     @classmethod
     def evaluate(
         cls,
@@ -128,3 +150,112 @@ class ScoredRun:
             metadata={} if metadata is None else _check_metadata(metadata),
             bootstrap=bootstrap,
         )
+
+
+_SCORE_KEYS = frozenset({"gold_count", "pred_count", "credit", "precision", "recall", "f1"})
+_COUNT_KEYS = frozenset({"correct", "total"})
+_SLICE_KEYS = frozenset({"count", "intent_accuracy", "slot_f1_strict", "slot_f1_partial"})
+RUN_ENVELOPE_KEYS = frozenset(
+    {
+        "schema",
+        "schema_version",
+        "run_id",
+        "record_count",
+        "intent",
+        "slot_strict",
+        "slot_partial",
+        "turn",
+        "confusion",
+        "slices",
+        "metadata",
+        "bootstrap",
+    }
+)
+
+
+def _slot_dict(score: SlotScore) -> dict[str, Any]:
+    return {
+        "gold_count": score.gold_count,
+        "pred_count": score.pred_count,
+        "credit": score.credit,
+        "precision": score.precision,
+        "recall": score.recall,
+        "f1": score.f1,
+    }
+
+
+def _check_counts(payload: Any, label: str) -> None:
+    if not isinstance(payload, dict) or set(payload) != _COUNT_KEYS:
+        raise SchemaError(f"{label} must be a dict with keys {sorted(_COUNT_KEYS)}")
+    correct, total = payload["correct"], payload["total"]
+    for name, value in (("correct", correct), ("total", total)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise SchemaError(f"{label} {name} must be a non-negative int")
+    if correct > total:
+        raise SchemaError(f"{label} correct {correct} exceeds total {total}")
+
+
+def _check_slot_payload(payload: Any, label: str) -> None:
+    if not isinstance(payload, dict) or set(payload) != _SCORE_KEYS:
+        raise SchemaError(f"{label} must be a dict with keys {sorted(_SCORE_KEYS)}")
+    try:
+        SlotScore(
+            gold_count=payload["gold_count"],
+            pred_count=payload["pred_count"],
+            credit=payload["credit"],
+        )
+    except ValidationError as exc:
+        raise SchemaError(f"{label} is invalid: {exc}") from exc
+
+
+def _envelope_error(payload: Any, where: str, problem: str) -> None:
+    raise SchemaError(f"run envelope {where} is invalid: {problem}")
+
+
+def validate_run_envelope(payload: Any) -> dict[str, Any]:
+    """Strict envelope validation; returns the payload when valid."""
+    if not isinstance(payload, dict):
+        raise SchemaError(f"run envelope must be a dict, got {type(payload).__name__}")
+    unknown = sorted(set(payload) - RUN_ENVELOPE_KEYS)
+    missing = sorted(RUN_ENVELOPE_KEYS - set(payload))
+    if unknown:
+        raise SchemaError(f"run envelope got unknown keys: {unknown}")
+    if missing:
+        raise SchemaError(f"run envelope is missing keys: {missing}")
+    if payload["schema"] != RUN_SCHEMA_ID:
+        raise SchemaError(f"unknown eval-run schema {payload['schema']!r}")
+    if payload["schema_version"] != RUN_SCHEMA_VERSION:
+        raise SchemaError(f"unsupported eval-run schema version {payload['schema_version']!r}")
+    if not isinstance(payload["run_id"], str) or not payload["run_id"]:
+        raise SchemaError("run envelope run_id must be a non-empty string")
+    count = payload["record_count"]
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise SchemaError("run envelope record_count must be a positive int")
+    _check_counts(payload["intent"], "intent score")
+    _check_counts(payload["turn"], "turn score")
+    _check_slot_payload(payload["slot_strict"], "slot_strict")
+    _check_slot_payload(payload["slot_partial"], "slot_partial")
+    try:
+        ConfusionMatrix.from_dict(payload["confusion"])
+    except ValidationError as exc:
+        raise SchemaError(f"run envelope confusion is invalid: {exc}") from exc
+    slices = payload["slices"]
+    if not isinstance(slices, dict):
+        raise SchemaError("run envelope slices must be a dict")
+    for kind, values in slices.items():
+        if not isinstance(kind, str) or not isinstance(values, dict):
+            _envelope_error(payload, "slices", f"kind {kind!r} must map to a dict")
+        for value, entry in values.items():
+            if not isinstance(value, str) or not isinstance(entry, dict):
+                _envelope_error(payload, "slices", f"value {value!r} must map to a dict")
+            if set(entry) != _SLICE_KEYS:
+                _envelope_error(payload, "slices", f"entry keys {sorted(set(entry))}")
+    if not isinstance(payload["metadata"], dict):
+        raise SchemaError("run envelope metadata must be a dict")
+    bootstrap = payload["bootstrap"]
+    if bootstrap is not None:
+        try:
+            BootstrapCI.from_dict(bootstrap)
+        except ValidationError as exc:
+            raise SchemaError(f"run envelope bootstrap is invalid: {exc}") from exc
+    return payload
