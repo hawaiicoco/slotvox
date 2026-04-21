@@ -10,6 +10,8 @@ no network.
 
 from __future__ import annotations
 
+import html
+
 from slotvox.errors import ValidationError
 from slotvox.eval.runs import ScoredRun
 
@@ -110,3 +112,103 @@ def markdown_report(run: ScoredRun) -> str:
     lines += [f"- {item}" for item in LIMITATIONS]
     lines.append("")
     return "\n".join(lines)
+
+
+_CSS = (
+    "body{font-family:sans-serif;margin:2rem auto;max-width:60rem;color:#111}"
+    "table{border-collapse:collapse;margin:0.5rem 0}"
+    "th,td{border:1px solid #999;padding:0.25rem 0.5rem;text-align:left}"
+    "th{background:#eee}"
+)
+
+
+def html_report(run: ScoredRun) -> str:
+    """Render the self-contained HTML report (escaped, inline CSS, no scripts)."""
+    _require_run(run)
+    esc = html.escape
+    parts = [
+        "<!DOCTYPE html>",
+        '<html lang="en">',
+        "<head>",
+        '<meta charset="utf-8">',
+        f"<title>Evaluation report: {esc(run.run_id)}</title>",
+        f"<style>{_CSS}</style>",
+        "</head>",
+        "<body>",
+        f"<h1>Evaluation report: {esc(run.run_id)}</h1>",
+        "<h2>Metadata</h2>",
+    ]
+    if run.metadata:
+        parts.append("<table><tr><th>key</th><th>value</th></tr>")
+        for key in sorted(run.metadata):
+            parts.append(f"<tr><td>{esc(str(key))}</td><td>{esc(str(run.metadata[key]))}</td></tr>")
+        parts.append("</table>")
+    else:
+        parts.append("<p>(none)</p>")
+    parts.append(f"<p>Records: {run.record_count}</p>")
+    parts.append("<h2>Intent</h2>")
+    parts.append(
+        f"<p>Accuracy: {_fmt(run.intent.accuracy)} ({run.intent.correct}/{run.intent.total})</p>"
+    )
+    parts.append("<h2>Slot F1 (both boundary policies)</h2>")
+    parts.append(
+        "<table><tr><th>policy</th><th>precision</th><th>recall</th><th>f1</th>"
+        "<th>gold spans</th><th>pred spans</th></tr>"
+    )
+    for name, score in (("strict", run.slot_strict), ("partial", run.slot_partial)):
+        parts.append(
+            f"<tr><td>{name}</td><td>{_fmt(score.precision)}</td>"
+            f"<td>{_fmt(score.recall)}</td><td>{_fmt(score.f1)}</td>"
+            f"<td>{score.gold_count}</td><td>{score.pred_count}</td></tr>"
+        )
+    parts.append("</table>")
+    parts.append("<h2>Joint turns</h2>")
+    parts.append(
+        f"<p>Turn accuracy (strict): {_fmt(run.turn.accuracy)} "
+        f"({run.turn.correct}/{run.turn.total})</p>"
+    )
+    parts.append("<h2>Intent confusion (rows gold, columns predicted)</h2>")
+    labels = run.confusion.labels
+    head = "".join(f"<th>{esc(label)}</th>" for label in labels)
+    parts.append(f"<table><tr><th>gold \\ pred</th>{head}</tr>")
+    for row_index, label in enumerate(labels):
+        cells = "".join(f"<td>{count}</td>" for count in run.confusion.counts[row_index])
+        parts.append(f"<tr><td>{esc(label)}</td>{cells}</tr>")
+    parts.append("</table>")
+    parts.append("<h2>Bootstrap CI (intent accuracy)</h2>")
+    if run.bootstrap is None:
+        parts.append("<p>Not computed for this run.</p>")
+    else:
+        ci = run.bootstrap
+        parts.append(
+            f"<p>Estimate {_fmt(ci.estimate)}, {ci.confidence:.0%} percentile CI "
+            f"[{_fmt(ci.low)}, {_fmt(ci.high)}] over {ci.replicates} replicates "
+            f"(seed {ci.seed}).</p>"
+        )
+    parts.append("<h2>Slices</h2>")
+    if not run.slices:
+        parts.append("<p>No slice metadata on this run's records.</p>")
+    else:
+        for kind in sorted(run.slices):
+            parts.append(f"<h3>{esc(kind)}</h3>")
+            parts.append(
+                "<table><tr><th>value</th><th>count</th><th>intent acc</th>"
+                "<th>slot f1 (strict)</th><th>slot f1 (partial)</th></tr>"
+            )
+            for value in sorted(run.slices[kind]):
+                entry = run.slices[kind][value]
+                parts.append(
+                    f"<tr><td>{esc(value)}</td><td>{entry['count']}</td>"
+                    f"<td>{_fmt(entry['intent_accuracy'])}</td>"
+                    f"<td>{_fmt(entry['slot_f1_strict'])}</td>"
+                    f"<td>{_fmt(entry['slot_f1_partial'])}</td></tr>"
+                )
+            parts.append("</table>")
+    parts.append("<h2>Limitations</h2>")
+    parts.append("<ul>")
+    for item in LIMITATIONS:
+        parts.append(f"<li>{esc(item)}</li>")
+    parts.append("</ul>")
+    parts.append("</body>")
+    parts.append("</html>")
+    return "\n".join(parts)
