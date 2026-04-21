@@ -11,6 +11,7 @@ no network.
 from __future__ import annotations
 
 import html
+from pathlib import Path
 
 from slotvox.errors import ValidationError
 from slotvox.eval.runs import ScoredRun
@@ -212,3 +213,19 @@ def html_report(run: ScoredRun) -> str:
     parts.append("</body>")
     parts.append("</html>")
     return "\n".join(parts)
+
+
+def write_reports(run: ScoredRun, out_dir, *, overwrite: bool = False) -> Path:
+    """Write ``report.md`` + ``report.html`` under ``out_dir``.
+
+    The HTML file is written last and acts as the commit point; an
+    existing report directory is an error unless ``overwrite`` is set.
+    """
+    _require_run(run)
+    root = Path(out_dir)
+    if (root / "report.html").exists() and not overwrite:
+        raise ValidationError(f"{root} already holds reports; pass overwrite=True to replace")
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "report.md").write_text(markdown_report(run), encoding="utf-8")
+    (root / "report.html").write_text(html_report(run), encoding="utf-8")
+    return root
