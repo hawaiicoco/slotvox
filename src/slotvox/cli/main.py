@@ -12,6 +12,7 @@ import sys
 
 from slotvox._version import __version__
 from slotvox.cli.common import EXIT_USAGE, run_command
+from slotvox.cli.schema import register_schema_command
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,7 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--version", action="version", version=f"slotvox {__version__}")
-    parser.add_subparsers(dest="command", metavar="COMMAND")
+    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+    register_schema_command(subparsers)
     return parser
 
 
