@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from slotvox.cli.common import EXIT_OK, emit
-from slotvox.config import GenerationConfig
+from slotvox.config import FeatureConfig, GenerationConfig
 from slotvox.config.generation import SPLITS
 from slotvox.data.dataset import generate_dataset
-from slotvox.data.persist import save_dataset
+from slotvox.data.features_store import featurize_dataset, read_features_envelope
+from slotvox.data.persist import load_dataset, save_dataset
 from slotvox.data.splits import SPLIT_POLICIES
 from slotvox.errors import ValidationError
 
@@ -53,9 +54,22 @@ def register_generate_command(subparsers: Any) -> None:
     parser.set_defaults(handler=cmd_generate)
 
 
+def register_featurize_command(subparsers: Any) -> None:
+    """Attach the ``featurize`` subcommand to ``subparsers``."""
+    parser = subparsers.add_parser("featurize", help="compute log-mel features for a saved dataset")
+    parser.add_argument("--dataset", required=True, help="dataset directory")
+    parser.add_argument("--out", required=True, help="feature-store directory")
+    parser.add_argument("--n-mels", type=int, default=64)
+    parser.add_argument("--sample-rate", type=int, default=16000)
+    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    parser.set_defaults(handler=cmd_featurize)
+
+
 def register_dataset_commands(subparsers: Any) -> None:
     """Attach the dataset subcommands to ``subparsers``."""
     register_generate_command(subparsers)
+    register_featurize_command(subparsers)
 
 
 def cmd_generate(args: Any) -> int:
@@ -81,6 +95,30 @@ def cmd_generate(args: Any) -> int:
     lines = [
         f"generated {sum(dataset.split_counts.values())} examples ({nonzero})",
         f"dataset hash: {dataset.dataset_hash}",
+        f"written to:   {root}",
+    ]
+    emit(args, payload, lines)
+    return EXIT_OK
+
+
+def cmd_featurize(args: Any) -> int:
+    """Load a saved dataset and write its log-mel feature store."""
+    dataset = load_dataset(args.dataset)
+    config = FeatureConfig(n_mels=args.n_mels, sample_rate=args.sample_rate)
+    root = featurize_dataset(dataset, config, args.out, overwrite=args.overwrite)
+    envelope = read_features_envelope(root)
+    payload = {
+        "path": str(root),
+        "example_count": envelope["example_count"],
+        "dataset_hash": envelope["dataset_hash"],
+        "n_mels": envelope["feature_config"]["n_mels"],
+        "sample_rate": envelope["sample_rate"],
+    }
+    lines = [
+        f"featurized {envelope['example_count']} examples "
+        f"({envelope['feature_config']['n_mels']} mel bins "
+        f"@ {envelope['sample_rate']} Hz)",
+        f"dataset hash: {envelope['dataset_hash']}",
         f"written to:   {root}",
     ]
     emit(args, payload, lines)
