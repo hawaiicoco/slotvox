@@ -1,20 +1,22 @@
 """Markdown and self-contained HTML evaluation reports.
 
 Every report carries a Limitations section — honest reporting is a
-structural requirement, not an option. All dynamic text (ids, labels,
-metadata values) is escaped, so hostile strings cannot inject markup:
-Markdown cells escape pipes and newlines, HTML output escapes
-everything and ships inline CSS only — no scripts, no external assets,
-no network.
+structural requirement, not an option. Reports render from either a
+live :class:`ScoredRun` or a serialized run envelope; both paths share
+one view representation, so identical numbers produce identical output.
+All dynamic text (ids, labels, metadata values) is escaped: Markdown
+cells escape pipes and newlines, HTML escapes everything and ships
+inline CSS only — no scripts, no external assets, no network.
 """
 
 from __future__ import annotations
 
 import html
 from pathlib import Path
+from typing import Any
 
 from slotvox.errors import ValidationError
-from slotvox.eval.runs import ScoredRun
+from slotvox.eval.runs import ScoredRun, validate_run_envelope
 
 LIMITATIONS = (
     "All data is synthetic (slotvox factory signals); no real speech, "
@@ -40,69 +42,140 @@ def _md_cell(value) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
-def markdown_report(run: ScoredRun) -> str:
-    """Render the full Markdown report for ``run``."""
-    _require_run(run)
-    lines = [f"# Evaluation report: {run.run_id}", "", "## Metadata", ""]
-    if run.metadata:
+def _score_view(score) -> dict[str, Any]:
+    return {
+        "precision": score.precision,
+        "recall": score.recall,
+        "f1": score.f1,
+        "gold_count": score.gold_count,
+        "pred_count": score.pred_count,
+    }
+
+
+def _run_view(run: ScoredRun) -> dict[str, Any]:
+    """Plain-data view of a live run (shared by both renderers)."""
+    return {
+        "run_id": run.run_id,
+        "metadata": run.metadata,
+        "record_count": run.record_count,
+        "intent": {
+            "correct": run.intent.correct,
+            "total": run.intent.total,
+            "accuracy": run.intent.accuracy,
+        },
+        "slot_strict": _score_view(run.slot_strict),
+        "slot_partial": _score_view(run.slot_partial),
+        "turn": {
+            "correct": run.turn.correct,
+            "total": run.turn.total,
+            "accuracy": run.turn.accuracy,
+        },
+        "labels": list(run.confusion.labels),
+        "counts": [list(row) for row in run.confusion.counts],
+        "bootstrap": None if run.bootstrap is None else run.bootstrap.to_dict(),
+        "slices": run.slices,
+    }
+
+
+def _ratio(correct: Any, total: Any) -> float:
+    return correct / total if total else 0.0
+
+
+def _envelope_view(envelope: Any) -> dict[str, Any]:
+    """Plain-data view of a serialized run envelope (strictly validated)."""
+    validated = validate_run_envelope(envelope)
+    intent = validated["intent"]
+    turn = validated["turn"]
+    return {
+        "run_id": validated["run_id"],
+        "metadata": validated["metadata"],
+        "record_count": validated["record_count"],
+        "intent": {
+            "correct": intent["correct"],
+            "total": intent["total"],
+            "accuracy": _ratio(intent["correct"], intent["total"]),
+        },
+        "slot_strict": dict(validated["slot_strict"]),
+        "slot_partial": dict(validated["slot_partial"]),
+        "turn": {
+            "correct": turn["correct"],
+            "total": turn["total"],
+            "accuracy": _ratio(turn["correct"], turn["total"]),
+        },
+        "labels": list(validated["confusion"]["labels"]),
+        "counts": [list(row) for row in validated["confusion"]["counts"]],
+        "bootstrap": validated["bootstrap"],
+        "slices": validated["slices"],
+    }
+
+
+def _markdown_view(view: dict[str, Any]) -> str:
+    lines = [f"# Evaluation report: {view['run_id']}", "", "## Metadata", ""]
+    metadata = view["metadata"]
+    if metadata:
         lines += ["| key | value |", "| --- | --- |"]
-        for key in sorted(run.metadata):
-            lines.append(f"| {_md_cell(key)} | {_md_cell(run.metadata[key])} |")
+        for key in sorted(metadata):
+            lines.append(f"| {_md_cell(key)} | {_md_cell(metadata[key])} |")
         lines.append("")
     else:
         lines += ["(none)", ""]
-    lines += [f"Records: {run.record_count}", "", "## Intent", ""]
+    intent = view["intent"]
+    lines += [f"Records: {view['record_count']}", "", "## Intent", ""]
     lines += [
-        f"Accuracy: {_fmt(run.intent.accuracy)} ({run.intent.correct}/{run.intent.total})",
+        f"Accuracy: {_fmt(intent['accuracy'])} ({intent['correct']}/{intent['total']})",
         "",
         "## Slot F1 (both boundary policies)",
         "",
         "| policy | precision | recall | f1 | gold spans | pred spans |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
-    for name, score in (("strict", run.slot_strict), ("partial", run.slot_partial)):
+    for name in ("slot_strict", "slot_partial"):
+        score = view[name]
+        policy = "strict" if name == "slot_strict" else "partial"
         lines.append(
-            f"| {name} | {_fmt(score.precision)} | {_fmt(score.recall)} | {_fmt(score.f1)} "
-            f"| {score.gold_count} | {score.pred_count} |"
+            f"| {policy} | {_fmt(score['precision'])} | {_fmt(score['recall'])} "
+            f"| {_fmt(score['f1'])} | {score['gold_count']} | {score['pred_count']} |"
         )
+    turn = view["turn"]
     lines += [
         "",
         "## Joint turns",
         "",
-        f"Turn accuracy (strict): {_fmt(run.turn.accuracy)} ({run.turn.correct}/{run.turn.total})",
+        f"Turn accuracy (strict): {_fmt(turn['accuracy'])} ({turn['correct']}/{turn['total']})",
         "",
         "## Intent confusion (rows gold, columns predicted)",
         "",
     ]
-    labels = run.confusion.labels
+    labels = view["labels"]
     lines.append("| gold \\ pred | " + " | ".join(_md_cell(label) for label in labels) + " |")
     lines.append("| --- |" * (len(labels) + 1))
     for row_index, label in enumerate(labels):
-        cells = " | ".join(str(count) for count in run.confusion.counts[row_index])
+        cells = " | ".join(str(count) for count in view["counts"][row_index])
         lines.append(f"| {_md_cell(label)} | {cells} |")
     lines += ["", "## Bootstrap CI (intent accuracy)", ""]
-    if run.bootstrap is None:
+    bootstrap = view["bootstrap"]
+    if bootstrap is None:
         lines.append("Not computed for this run.")
     else:
-        ci = run.bootstrap
         lines.append(
-            f"Estimate {_fmt(ci.estimate)}, {ci.confidence:.0%} percentile CI "
-            f"[{_fmt(ci.low)}, {_fmt(ci.high)}] over {ci.replicates} replicates "
-            f"(seed {ci.seed})."
+            f"Estimate {_fmt(bootstrap['estimate'])}, {bootstrap['confidence']:.0%} "
+            f"percentile CI [{_fmt(bootstrap['low'])}, {_fmt(bootstrap['high'])}] over "
+            f"{bootstrap['replicates']} replicates (seed {bootstrap['seed']})."
         )
     lines += ["", "## Slices", ""]
-    if not run.slices:
+    slices = view["slices"]
+    if not slices:
         lines.append("No slice metadata on this run's records.")
     else:
-        for kind in sorted(run.slices):
+        for kind in sorted(slices):
             lines += [
                 f"### {kind}",
                 "",
                 "| value | count | intent acc | slot f1 (strict) | slot f1 (partial) |",
                 "| --- | --- | --- | --- | --- |",
             ]
-            for value in sorted(run.slices[kind]):
-                entry = run.slices[kind][value]
+            for value in sorted(slices[kind]):
+                entry = slices[kind][value]
                 lines.append(
                     f"| {_md_cell(value)} | {entry['count']} | "
                     f"{_fmt(entry['intent_accuracy'])} | {_fmt(entry['slot_f1_strict'])} | "
@@ -115,6 +188,16 @@ def markdown_report(run: ScoredRun) -> str:
     return "\n".join(lines)
 
 
+def markdown_report(run: ScoredRun) -> str:
+    """Render the full Markdown report for a live run."""
+    return _markdown_view(_run_view(_require_run(run)))
+
+
+def markdown_from_envelope(envelope: Any) -> str:
+    """Render the Markdown report from a serialized run envelope."""
+    return _markdown_view(_envelope_view(envelope))
+
+
 _CSS = (
     "body{font-family:sans-serif;margin:2rem auto;max-width:60rem;color:#111}"
     "table{border-collapse:collapse;margin:0.5rem 0}"
@@ -123,81 +206,85 @@ _CSS = (
 )
 
 
-def html_report(run: ScoredRun) -> str:
-    """Render the self-contained HTML report (escaped, inline CSS, no scripts)."""
-    _require_run(run)
+def _html_view(view: dict[str, Any]) -> str:
     esc = html.escape
     parts = [
         "<!DOCTYPE html>",
         '<html lang="en">',
         "<head>",
         '<meta charset="utf-8">',
-        f"<title>Evaluation report: {esc(run.run_id)}</title>",
+        f"<title>Evaluation report: {esc(view['run_id'])}</title>",
         f"<style>{_CSS}</style>",
         "</head>",
         "<body>",
-        f"<h1>Evaluation report: {esc(run.run_id)}</h1>",
+        f"<h1>Evaluation report: {esc(view['run_id'])}</h1>",
         "<h2>Metadata</h2>",
     ]
-    if run.metadata:
+    metadata = view["metadata"]
+    if metadata:
         parts.append("<table><tr><th>key</th><th>value</th></tr>")
-        for key in sorted(run.metadata):
-            parts.append(f"<tr><td>{esc(str(key))}</td><td>{esc(str(run.metadata[key]))}</td></tr>")
+        for key in sorted(metadata):
+            parts.append(f"<tr><td>{esc(str(key))}</td><td>{esc(str(metadata[key]))}</td></tr>")
         parts.append("</table>")
     else:
         parts.append("<p>(none)</p>")
-    parts.append(f"<p>Records: {run.record_count}</p>")
+    intent = view["intent"]
+    parts.append(f"<p>Records: {view['record_count']}</p>")
     parts.append("<h2>Intent</h2>")
     parts.append(
-        f"<p>Accuracy: {_fmt(run.intent.accuracy)} ({run.intent.correct}/{run.intent.total})</p>"
+        f"<p>Accuracy: {_fmt(intent['accuracy'])} ({intent['correct']}/{intent['total']})</p>"
     )
     parts.append("<h2>Slot F1 (both boundary policies)</h2>")
     parts.append(
         "<table><tr><th>policy</th><th>precision</th><th>recall</th><th>f1</th>"
         "<th>gold spans</th><th>pred spans</th></tr>"
     )
-    for name, score in (("strict", run.slot_strict), ("partial", run.slot_partial)):
+    for name in ("slot_strict", "slot_partial"):
+        score = view[name]
+        policy = "strict" if name == "slot_strict" else "partial"
         parts.append(
-            f"<tr><td>{name}</td><td>{_fmt(score.precision)}</td>"
-            f"<td>{_fmt(score.recall)}</td><td>{_fmt(score.f1)}</td>"
-            f"<td>{score.gold_count}</td><td>{score.pred_count}</td></tr>"
+            f"<tr><td>{policy}</td><td>{_fmt(score['precision'])}</td>"
+            f"<td>{_fmt(score['recall'])}</td><td>{_fmt(score['f1'])}</td>"
+            f"<td>{score['gold_count']}</td><td>{score['pred_count']}</td></tr>"
         )
     parts.append("</table>")
+    turn = view["turn"]
     parts.append("<h2>Joint turns</h2>")
     parts.append(
-        f"<p>Turn accuracy (strict): {_fmt(run.turn.accuracy)} "
-        f"({run.turn.correct}/{run.turn.total})</p>"
+        f"<p>Turn accuracy (strict): {_fmt(turn['accuracy'])} "
+        f"({turn['correct']}/{turn['total']})</p>"
     )
     parts.append("<h2>Intent confusion (rows gold, columns predicted)</h2>")
-    labels = run.confusion.labels
+    labels = view["labels"]
     head = "".join(f"<th>{esc(label)}</th>" for label in labels)
     parts.append(f"<table><tr><th>gold \\ pred</th>{head}</tr>")
     for row_index, label in enumerate(labels):
-        cells = "".join(f"<td>{count}</td>" for count in run.confusion.counts[row_index])
+        cells = "".join(f"<td>{count}</td>" for count in view["counts"][row_index])
         parts.append(f"<tr><td>{esc(label)}</td>{cells}</tr>")
     parts.append("</table>")
     parts.append("<h2>Bootstrap CI (intent accuracy)</h2>")
-    if run.bootstrap is None:
+    bootstrap = view["bootstrap"]
+    if bootstrap is None:
         parts.append("<p>Not computed for this run.</p>")
     else:
-        ci = run.bootstrap
         parts.append(
-            f"<p>Estimate {_fmt(ci.estimate)}, {ci.confidence:.0%} percentile CI "
-            f"[{_fmt(ci.low)}, {_fmt(ci.high)}] over {ci.replicates} replicates "
-            f"(seed {ci.seed}).</p>"
+            f"<p>Estimate {_fmt(bootstrap['estimate'])}, {bootstrap['confidence']:.0%} "
+            f"percentile CI [{_fmt(bootstrap['low'])}, {_fmt(bootstrap['high'])}] over "
+            f"{bootstrap['replicates']} replicates (seed {bootstrap['seed']}).</p>"
         )
     parts.append("<h2>Slices</h2>")
-    if not run.slices:
+    slices = view["slices"]
+    if not slices:
         parts.append("<p>No slice metadata on this run's records.</p>")
     else:
-        for kind in sorted(run.slices):
+        for kind in sorted(slices):
             parts.append(f"<h3>{esc(kind)}</h3>")
             parts.append(
                 "<table><tr><th>value</th><th>count</th><th>intent acc</th>"
                 "<th>slot f1 (strict)</th><th>slot f1 (partial)</th></tr>"
             )
-            for value in sorted(run.slices[kind]):
-                entry = run.slices[kind][value]
+            for value in sorted(slices[kind]):
+                entry = slices[kind][value]
                 parts.append(
                     f"<tr><td>{esc(value)}</td><td>{entry['count']}</td>"
                     f"<td>{_fmt(entry['intent_accuracy'])}</td>"
@@ -215,17 +302,34 @@ def html_report(run: ScoredRun) -> str:
     return "\n".join(parts)
 
 
-def write_reports(run: ScoredRun, out_dir, *, overwrite: bool = False) -> Path:
+def html_report(run: ScoredRun) -> str:
+    """Render the self-contained HTML report for a live run."""
+    return _html_view(_run_view(_require_run(run)))
+
+
+def html_from_envelope(envelope: Any) -> str:
+    """Render the HTML report from a serialized run envelope."""
+    return _html_view(_envelope_view(envelope))
+
+
+def write_report_files(
+    markdown_text: str, html_text: str, out_dir, *, overwrite: bool = False
+) -> Path:
     """Write ``report.md`` + ``report.html`` under ``out_dir``.
 
     The HTML file is written last and acts as the commit point; an
     existing report directory is an error unless ``overwrite`` is set.
     """
-    _require_run(run)
     root = Path(out_dir)
     if (root / "report.html").exists() and not overwrite:
         raise ValidationError(f"{root} already holds reports; pass overwrite=True to replace")
     root.mkdir(parents=True, exist_ok=True)
-    (root / "report.md").write_text(markdown_report(run), encoding="utf-8")
-    (root / "report.html").write_text(html_report(run), encoding="utf-8")
+    (root / "report.md").write_text(markdown_text, encoding="utf-8")
+    (root / "report.html").write_text(html_text, encoding="utf-8")
     return root
+
+
+def write_reports(run: ScoredRun, out_dir, *, overwrite: bool = False) -> Path:
+    """Render and write both report formats for a live run."""
+    _require_run(run)
+    return write_report_files(markdown_report(run), html_report(run), out_dir, overwrite=overwrite)
