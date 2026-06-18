@@ -13,6 +13,7 @@ import sys
 from slotvox._version import __version__
 from slotvox.cli.common import EXIT_USAGE, run_command
 from slotvox.cli.dataset import register_dataset_commands
+from slotvox.cli.evalcmd import register_eval_command
 from slotvox.cli.instructionscmd import register_export_instructions_command
 from slotvox.cli.predict import register_predict_command
 from slotvox.cli.schema import register_schema_command
@@ -33,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
     register_schema_command(subparsers)
     register_dataset_commands(subparsers)
+    register_eval_command(subparsers)
     register_export_instructions_command(subparsers)
     register_stream_demo_command(subparsers)
     register_predict_command(subparsers)
