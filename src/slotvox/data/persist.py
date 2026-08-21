@@ -21,6 +21,7 @@ from typing import Any
 
 from slotvox.audio.riff import read_wav, write_wav
 from slotvox.config.base import config_from_dict
+from slotvox.config.generation import GenerationConfig
 from slotvox.data.dataset import GeneratedDataset
 from slotvox.data.factory import GeneratedExample
 from slotvox.data.stats import summarize
@@ -128,12 +129,30 @@ def load_dataset(in_dir: str | Path) -> GeneratedDataset:
     provenance = envelope.get("provenance")
     if not isinstance(provenance, dict):
         raise SchemaError("dataset envelope has no provenance object")
+    domain_id = provenance.get("domain_id")
+    language = provenance.get("language")
+    policy = provenance.get("policy")
+    seed = provenance.get("seed")
+    config_payload = provenance.get("config")
+    if not isinstance(domain_id, str):
+        raise SchemaError("provenance domain_id must be a string")
+    if not isinstance(language, str):
+        raise SchemaError("provenance language must be a string")
+    if not isinstance(policy, str):
+        raise SchemaError("provenance policy must be a string")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise SchemaError("provenance seed must be an int")
+    if not isinstance(config_payload, dict):
+        raise SchemaError("provenance config must be a dict")
+    config = config_from_dict(config_payload)
+    if not isinstance(config, GenerationConfig):
+        raise SchemaError("provenance config must describe a GenerationConfig")
     dataset = GeneratedDataset(
-        domain_id=provenance.get("domain_id"),
-        language=provenance.get("language"),
-        policy=provenance.get("policy"),
-        seed=provenance.get("seed"),
-        config=config_from_dict(provenance.get("config")),
+        domain_id=domain_id,
+        language=language,
+        policy=policy,
+        seed=seed,
+        config=config,
         examples=examples,
     )
     if dataset.dataset_hash != envelope.get("dataset_hash"):
