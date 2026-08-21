@@ -47,7 +47,7 @@ def mel_filterbank(
     _check_bank_params(sample_rate, n_fft, n_mels, fmin, fmax)
     n_freqs = n_fft // 2 + 1
     mel_points = np.linspace(hz_to_mel(fmin), hz_to_mel(fmax), n_mels + 2)
-    hz_points = mel_to_hz(mel_points)
+    hz_points = np.asarray(mel_to_hz(mel_points))
     bin_hz = np.arange(n_freqs, dtype=np.float64) * (sample_rate / n_fft)
     banks = np.zeros((n_mels, n_freqs), dtype=np.float64)
     for m in range(n_mels):
