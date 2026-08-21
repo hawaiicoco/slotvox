@@ -188,11 +188,13 @@ def tags_to_spans(tags) -> tuple[Span, ...]:
                 spans.append(Span(open_slot, start, index))
             open_slot, start = slot, index
         elif prefix == "S":
+            assert slot is not None  # parse_tag guarantees a slot for S/E tags
             if open_slot is not None:
                 spans.append(Span(open_slot, start, index))
                 open_slot = None
             spans.append(Span(slot, index, index + 1))
         elif prefix == "E":
+            assert slot is not None  # parse_tag guarantees a slot for S/E tags
             spans.append(Span(slot, start, index + 1))
             open_slot = None
     if open_slot is not None:
