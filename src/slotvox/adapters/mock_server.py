@@ -84,6 +84,12 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_json(200, response.to_dict())
 
 
+class _MockHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with a typed back-reference to the mock."""
+
+    mock: MockInferServer
+
+
 class MockInferServer:
     """Context-managed loopback mock serving one replay adapter."""
 
@@ -95,7 +101,7 @@ class MockInferServer:
         self._delays: deque[float] = deque()
         self._requests_served = 0
         self._lock = threading.Lock()
-        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self._httpd = _MockHTTPServer(("127.0.0.1", 0), _Handler)
         self._httpd.mock = self
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
 
@@ -103,16 +109,16 @@ class MockInferServer:
         self._thread.start()
         return self
 
-    def __exit__(self, *exc_info) -> bool:
+    def __exit__(self, *exc_info) -> None:
         self._httpd.shutdown()
         self._httpd.server_close()
         self._thread.join(timeout=5)
-        return False
 
     @property
     def base_url(self) -> str:
         """Loopback base URL (ephemeral port)."""
         host, port = self._httpd.server_address[:2]
+        assert isinstance(host, str)  # loopback binds always have string hosts
         return f"http://{host}:{port}"
 
     @property
