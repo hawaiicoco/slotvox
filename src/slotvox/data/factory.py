@@ -133,15 +133,18 @@ def instantiate_template(
     slot_values: dict[str, list[str]] = {}
     for plan in template.tokens:
         if not plan.is_slot:
+            assert plan.text is not None  # TokenPlan: literal plans carry text
             tokens.append(plan.text)
             tags.append(OUTSIDE)
             continue
-        entries = slot_entries(domain_id, language, plan.slot)
+        slot = plan.slot
+        assert slot is not None  # TokenPlan: slot plans carry a slot name
+        entries = slot_entries(domain_id, language, slot)
         entry = entries[int(rng.integers(len(entries)))]
         for index, token in enumerate(tokenize(entry.surface, language)):
             tokens.append(token)
-            tags.append(format_tag("B" if index == 0 else "I", plan.slot))
-        slot_values.setdefault(plan.slot, []).append(entry.surface)
+            tags.append(format_tag("B" if index == 0 else "I", slot))
+        slot_values.setdefault(slot, []).append(entry.surface)
     return tuple(tokens), tuple(tags), {slot: tuple(v) for slot, v in slot_values.items()}
 
 
