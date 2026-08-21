@@ -64,7 +64,6 @@ markers = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
 files = ["src/slotvox"]
 ignore_missing_imports = true
 
