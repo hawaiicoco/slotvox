@@ -127,9 +127,9 @@ class StreamSession:
         ).T
         receptive = getattr(model.encoder, "receptive_field", None)
         self._gru = receptive is None
-        self._context = 0 if self._gru else int(receptive) - 1
+        self._context = 0 if receptive is None else int(receptive) - 1
         self._mel_window: deque[np.ndarray] = deque(maxlen=max(self._context, 1))
-        self._hidden = None
+        self._hidden: torch.Tensor | None = None
         self._frame_cursor = 0
         self._n_pushed = 0
         self._committed_tags: list[str] = []
