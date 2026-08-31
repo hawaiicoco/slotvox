@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. The format follows
 Keep a Changelog; versioning uses semantic versioning (0.x series).
 
+## [0.1.1]
+
+### Fixed
+
+- CI workflow provisions the project `.venv` so every Makefile target runs against the installed environment.
+
 ## [0.1.0]
 
 ### Added
