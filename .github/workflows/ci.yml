@@ -35,5 +35,7 @@ jobs:
         run: make format-check
       - name: make lint
         run: make lint
+      - name: make typecheck
+        run: make typecheck
       - name: Wheel install smoke test
         run: python scripts/check_package.py
