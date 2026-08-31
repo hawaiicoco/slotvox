@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -25,6 +26,9 @@ from slotvox.models.vocab import PAD_INDEX, Vocab
 from slotvox.schema.annotations import AnnotatedUtterance
 from slotvox.schema.serialize import read_json, read_jsonl
 from slotvox.synth.utterance import SyntheticUtterance
+
+if TYPE_CHECKING:
+    import torch
 
 
 @dataclass(frozen=True)
