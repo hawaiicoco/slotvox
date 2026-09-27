@@ -40,3 +40,19 @@ jobs:
         run: make typecheck
       - name: Wheel install smoke test
         run: python scripts/check_package.py
+
+  core-only:
+    name: NumPy-only core on Python 3.12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install without the torch extra
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[dev]"
+      - name: Verify torch is absent
+        run: .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('torch') is None"
