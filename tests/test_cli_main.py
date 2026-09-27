@@ -1,5 +1,8 @@
 """CLI skeleton: version, usage errors, and the exit-code contract."""
 
+import subprocess
+import sys
+
 import pytest
 
 from slotvox._version import __version__
@@ -15,6 +18,16 @@ def test_version_flag(capsys):
     out = capsys.readouterr().out
     assert __version__ in out
     assert "slotvox" in out
+
+
+def test_module_entrypoint_reports_version():
+    result = subprocess.run(
+        [sys.executable, "-m", "slotvox", "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == f"slotvox {__version__}"
 
 
 def test_no_command_prints_usage_and_returns_2(capsys):
