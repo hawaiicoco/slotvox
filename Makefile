@@ -30,7 +30,7 @@ typecheck:
 release:
 	rm -rf dist
 	$(PY) -m build --no-isolation
-	$(PY) scripts/check_package.py
+	$(PY) scripts/check_package.py --all-distributions
 
 clean:
 	rm -rf dist build .pytest_cache .ruff_cache .mypy_cache
