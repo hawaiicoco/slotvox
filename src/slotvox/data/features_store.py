@@ -50,10 +50,15 @@ def featurize_dataset(
     if (root / "features.json").exists() and not overwrite:
         raise ValidationError(f"{root} already holds features; pass overwrite=True to replace")
     root.mkdir(parents=True, exist_ok=True)
+    expected_ids = {example.utterance_id for example in dataset.examples}
     for example in dataset.examples:
         mel = log_mel(example.utterance.samples, feature_config)
         token_map = frame_token_map(example.utterance, feature_config)
         np.savez(root / f"{example.utterance_id}.npz", mel=mel, frame_token=token_map)
+    if overwrite:
+        for path in root.glob("*.npz"):
+            if path.stem not in expected_ids:
+                path.unlink()
     envelope = {
         "schema": FEATURES_SCHEMA_ID,
         "schema_version": FEATURES_SCHEMA_VERSION,
